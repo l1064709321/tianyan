@@ -1,12 +1,17 @@
 fastapi>=0.110
-uvicorn[standard]>=0.27
+uvicorn>=0.27
 litellm>=1.40
 pydantic>=2.6
 pydantic-settings>=2.2
 PyYAML>=6.0
 python-multipart>=0.0.9
 
-# 文件读取
+# ===== 高性能组件 (按平台自动选择, 用户无需干预) =====
+# Linux/macOS: 装 uvloop + httptools (C 扩展, HTTP 性能提升 2-3x)
+uvloop>=0.14; sys_platform != 'win32'
+httptools>=0.5; sys_platform != 'win32'
+
+# ===== 文件读取 =====
 python-docx>=1.1          # .docx
 pypdf>=4.0                # .pdf
 ebooklib>=0.18            # .epub

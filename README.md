@@ -77,8 +77,8 @@
 
 ```powershell
 # 1. 克隆
-git clone https://github.com/l1064709321/xiaoshuo-agent.git
-cd xiaoshuo-agent
+git clone https://github.com/l1064709321/saga.git
+cd saga
 
 # 2. 装依赖 (uvloop/httptools 会自动跳过)
 pip install -r requirements.txt
@@ -93,8 +93,8 @@ na.bat start                       # 后台运行
 
 ```bash
 # 1. 克隆
-git clone https://github.com/l1064709321/xiaoshuo-agent.git
-cd xiaoshuo-agent
+git clone https://github.com/l1064709321/saga.git
+cd saga
 
 # 2. 装依赖 (自动安装 uvloop/httptools 高性能组件)
 pip install -r requirements.txt
@@ -143,7 +143,7 @@ vim ~/.xiaosuo-agent/config.yaml
 ## 📁 项目结构
 
 ```
-xiaoshuo-agent/
+saga/
 ├── app/
 │   ├── agents.py       # 7-agent 定义 + 8 阶段工作流 + 毒舌审稿人设
 │   ├── tools.py        # 11 个工具(扫榜/拆书/大纲/续写/润色/...)
@@ -190,9 +190,9 @@ xiaoshuo-agent/
 
 ---
 
-## 📜 License
+# 📜 License
 
-### 📜 许可证与用户协议
+###  许可证与用户协议
 
 本项目采用 **三开源协议** 结构：
 

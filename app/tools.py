@@ -72,7 +72,35 @@ def _keyword_score(query: str, text: str) -> float:
 
 
 def _retrieve_context(pid: str, query: str, k: int = 6) -> str:
-    """从上传小说分块 + 已有章节中检索与 query 最相关的内容。"""
+    """从上传小说分块 + 已有章节中检索与 query 最相关的内容。
+
+    改进: 优先使用向量语义检索, 降级到关键词匹配。
+    """
+    import asyncio
+    try:
+        from .vector_store import hybrid_retrieve
+        # 如果已在事件循环中, 直接用同步方式降级
+        try:
+            loop = asyncio.get_running_loop()
+            # 已在异步上下文中, 创建 task
+            import concurrent.futures
+            # 向量检索需要异步, 这里用降级的关键词方案
+            raise RuntimeError("在异步上下文中, 使用关键词降级")
+        except RuntimeError:
+            pass
+        # 尝试获取结果
+        try:
+            result = asyncio.get_event_loop().run_until_complete(
+                hybrid_retrieve(pid, query, top_k=k)
+            )
+            if result and result != "(无可用上文)":
+                return result
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # 降级: 原版关键词检索
     s = get_settings()
     k = k or s.retrieve_k
     chunks = store.list_chunks(pid)
@@ -83,7 +111,6 @@ def _retrieve_context(pid: str, query: str, k: int = 6) -> str:
             scored.append((sc, ch))
     scored.sort(key=lambda x: x[0], reverse=True)
     picked = [c for _, c in scored[:k]]
-    # 不足 k 时,补上最近的章节尾部 (保证续写有连续性)
     chapters = store.list_chapters(pid)
     chap_tail = ""
     if chapters:
@@ -282,8 +309,63 @@ async def continue_writing(
     merged = (target.get("content") or "") + ("\n" if target.get("content") else "") + new_text
     store.update_chapter(target["id"], content=merged, status="written")
 
+    # 改进: 自动保存检查点
+    try:
+        from .checkpoint import auto_checkpoint
+        auto_checkpoint(pid, event=f"chapter_{target['idx']}_written")
+    except Exception:
+        pass
+
     # 写后去AI味检测 (P0-4: 集成 deai.py)
     deai_result = run_full_deai_check(new_text)
+
+    # ===== 改进: 自我反思机制 =====
+    # 生成后自评打分, 低于阈值自动重写 (最多 1 次)
+    reflection_result = None
+    if deai_result["blocking_count"] == 0:  # 只有无 blocking 问题时才反思
+        try:
+            from .reflection import self_reflect
+            reflection = await self_reflect(
+                new_text,
+                outline=target.get("outline", ""),
+                genre=(store.get_project(pid) or {}).get("genre", ""),
+                style=(store.get_project(pid) or {}).get("style", ""),
+            )
+            reflection_result = reflection
+            if not reflection["passes"] and reflection["score"] < 5:
+                # 分数太低, 自动重写一次
+                logger.info(f"[反思] 分数={reflection['score']}, 自动重写")
+                store.update_chapter(target["id"], status="generating")
+                rewrite_instruction = (
+                    f"{instruction}\n\n"
+                    f"【重写要求】上次生成的问题:\n"
+                    + "\n".join(f"- {issue}" for issue in reflection["issues"])
+                    + f"\n重点关注: {reflection.get('rewrite_focus', '')}"
+                )
+                rewrite_user = (
+                    f"# 项目设定\n{brief}\n\n# 设定资料\n{elements}\n\n"
+                    f"# 检索到的相关上文\n{context}\n\n"
+                    f"# 本章细纲\n标题:{target['title']}\n细纲:\n{target.get('outline','(暂无细纲)')}\n\n"
+                    f"# 续写要求\n{rewrite_instruction}\n"
+                    f"续写约 {length} 字正文,直接输出小说内容。"
+                )
+                pieces2: list[str] = []
+                try:
+                    async for tok in stream(
+                        [{"role": "system", "content": system}, {"role": "user", "content": rewrite_user}],
+                        get_settings().default_model,
+                        temperature=0.85,
+                        max_tokens=max(1024, int(length * 2)),
+                    ):
+                        pieces2.append(tok)
+                    rewrite_text = "".join(pieces2)
+                    if rewrite_text.strip():
+                        new_text = rewrite_text
+                        logger.info(f"[反思] 重写成功, 新文本长度={len(new_text)}")
+                except Exception as e:
+                    logger.warning(f"[反思] 重写失败: {e}, 使用原始文本")
+        except Exception as e:
+            logger.debug(f"[反思] 自评失败 (非致命): {e}")
 
     # 写后追踪更新 (P0-3: 追踪文件读写闭环)
     tracking_result = await _update_tracking_after_write(
@@ -308,6 +390,11 @@ async def continue_writing(
             ),
         },
         "tracking": tracking_result,
+        "reflection": {
+            "score": reflection_result["score"] if reflection_result else None,
+            "passed": reflection_result["passes"] if reflection_result else None,
+            "issues": reflection_result["issues"] if reflection_result else [],
+        } if reflection_result else None,
     }
 
 

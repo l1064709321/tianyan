@@ -21,8 +21,16 @@ try:
     from tkinter import ttk, font as tkfont
 except ImportError:
     print("错误: 系统未安装 tkinter (Python GUI 库)")
-    print("Ubuntu/Debian: sudo apt install python3-tk")
-    print("CentOS/RHEL: sudo yum install python3-tkinter")
+    if sys.platform == "win32":
+        print("Windows: 重新安装 Python 时勾选 'tcl/tk and IDLE' 选项")
+        print("  或下载安装: https://www.python.org/downloads/")
+    elif sys.platform == "darwin":
+        print("macOS: brew install python-tk@3.12  (Homebrew)")
+        print("  或使用官方 Python 安装包 (自带 tkinter)")
+    else:
+        print("Ubuntu/Debian: sudo apt install python3-tk")
+        print("CentOS/RHEL: sudo yum install python3-tkinter")
+        print("Arch: sudo pacman -S tk")
     sys.exit(1)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

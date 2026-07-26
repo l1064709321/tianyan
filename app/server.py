@@ -454,6 +454,109 @@ def save_agent_params(body: AgentParamsIn):
     return {"ok": True}
 
 
+# ---------- 记忆 (Memory) ----------
+@app.get("/api/projects/{pid}/memory")
+def get_project_memory(pid: str):
+    """获取项目长期记忆"""
+    from .memory import get_memory, search_memory
+    return {
+        "memory": get_memory(pid),
+    }
+
+
+@app.get("/api/projects/{pid}/memory/search")
+def search_project_memory(pid: str, q: str = "", k: int = 5):
+    """检索项目记忆"""
+    from .memory import search_memory
+    return {"results": search_memory(pid, q, k)}
+
+
+# ---------- 动态规划 (Planner) ----------
+@app.get("/api/projects/{pid}/plan")
+def get_project_plan(pid: str):
+    """获取当前执行计划"""
+    from .planner import get_plan, get_plan_summary
+    plan = get_plan(pid)
+    return {
+        "has_plan": plan is not None,
+        "summary": get_plan_summary(pid),
+        "steps": [
+            {"id": s.id, "description": s.description, "agent": s.agent,
+             "tool": s.tool, "status": s.status, "result": s.result}
+            for s in (plan.steps if plan else [])
+        ],
+    }
+
+
+class PlanIn(BaseModel):
+    goal: str
+
+
+@app.post("/api/projects/{pid}/plan")
+async def create_project_plan(pid: str, body: PlanIn):
+    """生成动态执行计划"""
+    from .planner import generate_plan
+    plan = await generate_plan(pid, body.goal)
+    return {
+        "steps": [
+            {"id": s.id, "description": s.description, "agent": s.agent,
+             "tool": s.tool, "status": s.status}
+            for s in plan.steps
+        ],
+    }
+
+
+# ---------- 审批门 (Approval) ----------
+@app.get("/api/projects/{pid}/approvals")
+def list_approvals(pid: str):
+    """列出待审批请求"""
+    from .approval import list_pending
+    return {"approvals": list_pending()}
+
+
+class ApprovalAction(BaseModel):
+    response: str = ""
+
+
+@app.post("/api/approvals/{request_id}/approve")
+def approve_request(request_id: str, body: ApprovalAction):
+    """审批通过"""
+    from .approval import approve
+    ok = approve(request_id, body.response or "approved")
+    return {"ok": ok}
+
+
+@app.post("/api/approvals/{request_id}/reject")
+def reject_request(request_id: str, body: ApprovalAction):
+    """审批拒绝"""
+    from .approval import reject
+    ok = reject(request_id, body.response or "rejected")
+    return {"ok": ok}
+
+
+# ---------- 检查点 (Checkpoint) ----------
+@app.get("/api/projects/{pid}/checkpoints")
+def list_checkpoints(pid: str):
+    """列出检查点"""
+    from .checkpoint import list_checkpoints
+    return {"checkpoints": list_checkpoints(pid)}
+
+
+@app.get("/api/projects/{pid}/checkpoints/latest")
+def get_latest_checkpoint(pid: str):
+    """获取最近检查点"""
+    from .checkpoint import get_latest_checkpoint
+    return {"checkpoint": get_latest_checkpoint(pid)}
+
+
+@app.post("/api/projects/{pid}/checkpoints")
+def create_checkpoint(pid: str):
+    """手动创建检查点"""
+    from .checkpoint import save_checkpoint
+    cid = save_checkpoint(pid, label="manual")
+    return {"id": cid}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}

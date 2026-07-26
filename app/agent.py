@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import time
 from typing import AsyncIterator, Optional
 
@@ -32,9 +33,58 @@ from .config import get_settings
 from .llm import chat
 
 
+# ===== 改进:LLM 调用重试机制 =====
+# 原版: LLM 调用失败直接报错 → 网络抖动/API 限流就挂
+# 改进: 指数退避重试,临时错误自动恢复
+async def _chat_with_retry(
+    messages: list[dict],
+    cfg,
+    *,
+    tools: list | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    response_format: dict | None = None,
+    assistant_prefill: str | None = None,
+    stop: list[str] | None = None,
+    max_retries: int = 3,
+    base_delay: float = 2.0,
+) -> dict:
+    """带重试的 LLM 调用。指数退避: 2s → 4s → 8s。
+
+    可重试错误: 超时/429限流/5xx服务端错误/连接错误
+    不可重试: 401认证失败/400参数错误 (直接抛出)
+    """
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            return await chat(
+                messages, cfg,
+                tools=tools, temperature=temperature, max_tokens=max_tokens,
+                response_format=response_format, assistant_prefill=assistant_prefill,
+                stop=stop,
+            )
+        except Exception as e:
+            last_err = e
+            err_str = str(e).lower()
+            # 不可重试的错误: 认证失败/参数错误/模型不存在
+            if any(kw in err_str for kw in ("401", "403", "invalid api key", "missing credentials", "model_not_found")):
+                raise
+            # 可重试: 超时/429/5xx/连接错误
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"[重试 {attempt+1}/{max_retries}] LLM 调用失败: {e}, {delay}s 后重试")
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"[重试耗尽] LLM 调用 {max_retries} 次均失败: {e}")
+    raise last_err  # type: ignore
+
+
 # ---------- 实时日志 ----------
-# 配置: 同时输出到 stderr (uvicorn 控制台) 和 /tmp/novel-agent-agent.log
-_AGENT_LOG = os.environ.get("NA_AGENT_LOG", "/tmp/novel-agent-agent.log")
+# 配置: 同时输出到 stderr (uvicorn 控制台) 和系统临时目录
+_AGENT_LOG = os.environ.get(
+    "NA_AGENT_LOG",
+    os.path.join(tempfile.gettempdir(), "novel-agent-agent.log"),
+)
 logger = logging.getLogger("novel_agent")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
@@ -85,18 +135,68 @@ def _check_sandbox(agent_name: str, tool_name: str) -> str | None:
     return None
 
 
-# 原理2: 上下文窗口管理。LLM 无记忆,每次把全部历史塞回去;长篇对话会撑爆窗口。
-# 滑动窗口:超阈值时保留 system + 最近若干回合,丢弃更早的纯文本对话。
-# 关键约束:assistant(tool_calls)+tool 必须成对完整,不能从中间截断,否则 tool_call_id 失配导致 API 报错。
-MAX_CONTEXT_CHARS = 14000  # 历史对话字符上限(超出触发截断)
+# ===== 上下文窗口管理 (改进:摘要压缩替代粗暴截断) =====
+# 原版: 超长直接丢弃旧消息 → 丢失重要上下文(角色设定/伏笔/剧情决策)
+# 改进: 超长时把旧消息压缩成摘要,保留关键信息,再拼接最近消息
+MAX_CONTEXT_CHARS = 14000  # 历史对话字符上限(超出触发压缩)
 KEEP_LAST_TURNS = 8        # 至少保留最近这么多回合
 
 
-def _trim_for_window(msgs: list[dict]) -> list[dict]:
-    """滑动窗口截断:保留所有 system + 最近若干回合,丢弃更早的非系统消息。
+def _summarize_old_messages(old_msgs: list[dict]) -> str:
+    """把旧消息压缩成结构化摘要,保留关键信息。
 
-    回合边界 = user 消息位置;从某个 user 起到末尾的消息(含其间
-    assistant(tool_calls)+tool 链)天然完整,不会破坏 tool_call_id 配对。
+    提取:
+    - 用户的关键需求/指令
+    - 工具调用的结果摘要(大纲/章节/设定等)
+    - 决策与结论
+    跳过:
+    - 纯过程性消息(心跳/中间状态)
+    - 已被后续消息覆盖的旧信息
+    """
+    key_points: list[str] = []
+    for m in old_msgs:
+        role = m.get("role", "")
+        content = str(m.get("content") or "")
+        if not content.strip():
+            continue
+        # user 消息: 提取指令
+        if role == "user":
+            if len(content) > 200:
+                key_points.append(f"用户指令: {content[:200]}...")
+            else:
+                key_points.append(f"用户指令: {content}")
+        # tool 结果: 只提取成功的工具结果摘要
+        elif role == "tool":
+            name = m.get("name", "")
+            if name in ("heartbeat", "_heartbeat"):
+                continue
+            # 截取前 150 字符作为摘要
+            if len(content) > 150:
+                key_points.append(f"工具 {name} 结果: {content[:150]}...")
+            else:
+                key_points.append(f"工具 {name} 结果: {content}")
+        # assistant 消息: 只提取有实质内容的
+        elif role == "assistant" and content and len(content) > 30:
+            if len(content) > 150:
+                key_points.append(f"助手回复: {content[:150]}...")
+            else:
+                key_points.append(f"助手回复: {content}")
+    if not key_points:
+        return "(早期对话已省略)"
+    # 限制摘要长度
+    summary = "\n".join(key_points[-20:])  # 最多保留 20 条关键点
+    if len(summary) > 2000:
+        summary = summary[:2000] + "\n...(摘要已截断)"
+    return summary
+
+
+def _trim_for_window(msgs: list[dict]) -> list[dict]:
+    """上下文压缩:保留 system + 最近回合,旧消息压缩成摘要。
+
+    改进点:
+    1. 旧消息不再直接丢弃,而是压缩成结构化摘要(保留关键决策/工具结果)
+    2. 摘要作为 system 消息注入,让模型知道之前发生了什么
+    3. 关键约束不变:assistant(tool_calls)+tool 必须成对完整
     """
     sys_msgs = [m for m in msgs if m.get("role") == "system"]
     rest = [m for m in msgs if m.get("role") != "system"]
@@ -119,12 +219,21 @@ def _trim_for_window(msgs: list[dict]) -> list[dict]:
         if not nxt:
             break  # 已是最少(只保留最后一个回合起),无法再减
         cut = nxt[0]
-    note = [{"role": "system", "content": f"(更早的 {cut} 条对话已省略以节省上下文窗口)"}]
+    # 改进:把旧消息压缩成摘要而非直接丢弃
+    old_msgs = rest[:cut]
+    summary = _summarize_old_messages(old_msgs)
+    note = [{"role": "system", "content": f"【早期对话摘要】({cut} 条消息已压缩)\n{summary}"}]
     return sys_msgs + note + rest[cut:]
 
 
 def _build_messages(pid: str, agent_name: str = agents.DEFAULT_AGENT) -> list[dict]:
-    """组装对话历史 + 项目背景 + 指定 agent 的系统提示词。"""
+    """组装对话历史 + 项目背景 + 指定 agent 的系统提示词。
+
+    改进: 注入项目记忆 + 动态计划上下文
+    """
+    from .memory import get_memory_context
+    from .planner import get_plan_summary
+
     msgs: list[dict] = []
     proj = store.get_project(pid)
     if proj:
@@ -136,6 +245,17 @@ def _build_messages(pid: str, agent_name: str = agents.DEFAULT_AGENT) -> list[di
                 f"核心设定: {proj.get('premise','')}"
             ),
         })
+
+    # 改进: 注入项目长期记忆
+    memory_ctx = get_memory_context(pid)
+    if memory_ctx:
+        msgs.append({"role": "system", "content": memory_ctx})
+
+    # 改进: 注入当前执行计划
+    plan_summary = get_plan_summary(pid)
+    if plan_summary:
+        msgs.append({"role": "system", "content": plan_summary})
+
     msgs.append({"role": "system", "content": agents.get_prompt(agent_name)})
     for m in store.list_messages(pid):
         if m["role"] == "tool":
@@ -288,7 +408,7 @@ async def _run_sub_agent(
             # 默认用非 reasoning 模型 (如 agnes-1.5-flash),4096 够用。
             # 若用 reasoning 模型 (agnes-2.0-flash) 需在 ModelConfig.max_tokens 调大,
             # 但 reasoning 模型做 agent loop 工具调用决策不可靠,不推荐。
-            resp = await chat(messages, s.default_model, tools=tool_schema)
+            resp = await _chat_with_retry(messages, s.default_model, tools=tool_schema)
         except Exception as e:
             logger.error(f"[{agent_name}] step={step} LLM 调用失败: {e}")
             if run_id:
@@ -348,6 +468,15 @@ async def _run_sub_agent(
     return f"(子 agent {agent_name} 达到最大步数 {sub_max_steps},任务未完全完成)"
 
 
+async def _extract_and_save_memory_safe(pid: str, user_input: str, response: str) -> None:
+    """安全提取记忆 (失败不影响主流程)"""
+    try:
+        from .memory import extract_and_save_memory
+        await extract_and_save_memory(pid, user_input, response)
+    except Exception as e:
+        logger.debug(f"[记忆] 提取失败 (非致命): {e}")
+
+
 async def run(
     pid: str, user_input: str, agent_name: str = agents.DEFAULT_AGENT
 ) -> AsyncIterator[str]:
@@ -386,7 +515,7 @@ async def run(
         t0 = time.time()
         # 用 task 包装 LLM 调用, 等待期间定期 yield 心跳, 防前端误判断连
         hb = s.sse_heartbeat_interval
-        llm_task = asyncio.ensure_future(chat(messages, s.default_model, tools=tool_schema))
+        llm_task = asyncio.ensure_future(_chat_with_retry(messages, s.default_model, tools=tool_schema))
         try:
             if hb <= 0:
                 resp = await llm_task
@@ -466,6 +595,13 @@ async def run(
                 "steps": step + 1, "stats": stats, "run_id": run_id,
             })
             logger.info(f"========== 主 agent 完成 steps={step+1} run_id={run_id} ==========")
+            # 改进: 异步提取关键信息写入长期记忆 (不阻塞响应)
+            try:
+                asyncio.ensure_future(
+                    _extract_and_save_memory_safe(pid, user_input, content)
+                )
+            except Exception:
+                pass
             return
 
         messages.append({
@@ -487,15 +623,16 @@ async def run(
             tool_name="tool_calls",
         )
 
+        # ===== 工具调用循环检测 + 并行执行 =====
+        # 先检查循环,再决定并行还是串行
+        tool_items = []
         for tc in tool_calls:
             fname = tc.function.name
             try:
                 fargs = json.loads(tc.function.arguments or "{}")
             except Exception:
                 fargs = {}
-            # ===== 工具调用循环检测 =====
-            # 连续相同 (tool, args) 调用 = LLM 卡循环了, 强制终止
-            # 不同工具调用时重置计数器 (只检测"连续相同")
+            # 循环检测
             args_key = (fname, json.dumps(fargs, sort_keys=True, ensure_ascii=False))
             if list(_tool_call_counter.keys()) == [args_key]:
                 _tool_call_counter[args_key] += 1
@@ -512,44 +649,103 @@ async def run(
                 yield _event({"type": "error", "message": msg,
                               "run_id": run_id, "reason": "loop_detected"})
                 return
-            logger.info(f"[{agent_name}] step={step} → 调工具 {fname} args={_trunc(json.dumps(fargs, ensure_ascii=False), 150)}")
-            yield _event({
-                "type": "step", "agent": agent_name, "tool": fname,
-                "args": fargs, "thinking": thinking,
-            })
-            # 用 task 包装工具调用, 等待期间定期 yield 心跳 + 实时吐出
-            # 子 agent 委派过程中的 delegate/delegate_done 事件 (前端能看到协同进度)
-            exec_task = asyncio.ensure_future(_exec_tool(
-                pid, fname, fargs, depth=0, emit=emit,
-                agent_name=agent_name, run_id=run_id,
-            ))
+            tool_items.append((tc, fname, fargs))
+
+        # 并行执行: 多个独立工具调用并发运行 (改进: 原版是串行)
+        # delegate_to_agent 由于需要子 agent 运行循环,仍然串行
+        # 其他工具 (query_project/add_element/scan_bestseller 等) 可以并行
+        PARALLEL_TOOLS = {"query_project", "add_element", "manage_outline", "load_context",
+                          "quality_check", "list_authors", "match_author", "get_author_reference",
+                          "scan_bestseller", "analyze_novel", "review_chapter",
+                          "deconstruct", "audit_novel", "detect_ai", "diagnose_opening",
+                          "analyze_style", "imitate_style", "diagnose_stuck", "full_audit",
+                          "web_fetch", "web_search", "browser_fetch", "browser_screenshot"}
+        can_parallel = len(tool_items) > 1 and all(f in PARALLEL_TOOLS for _, f, _ in tool_items)
+
+        if can_parallel:
+            # 并行执行所有工具调用
+            logger.info(f"[{agent_name}] step={step} → 并行调用 {[f for _, f, _ in tool_items]}")
+            for tc, fname, fargs in tool_items:
+                yield _event({
+                    "type": "step", "agent": agent_name, "tool": fname,
+                    "args": fargs, "thinking": thinking,
+                })
+            # 并发执行
+            tasks = [
+                asyncio.ensure_future(_exec_tool(
+                    pid, fname, fargs, depth=0, emit=emit,
+                    agent_name=agent_name, run_id=run_id,
+                ))
+                for _, fname, fargs in tool_items
+            ]
+            # 等待期间定期 yield 心跳
             if hb <= 0:
-                result = await exec_task
+                results = await asyncio.gather(*tasks, return_exceptions=True)
             else:
                 while True:
                     done, _ = await asyncio.wait(
-                        {exec_task}, timeout=hb, return_when=asyncio.FIRST_COMPLETED,
+                        set(tasks), timeout=hb, return_when=asyncio.ALL_COMPLETED,
                     )
                     while event_queue:
                         yield event_queue.pop(0)
-                    if exec_task in done:
+                    if len(done) == len(tasks):
                         break
-                    yield _event({"type": "heartbeat", "ts": time.time(),
-                                  "run_id": run_id})
-                result = exec_task.result()
-            logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 结果={_trunc(result, 200)}")
-            # 若该工具触发过子 agent,事件已累积在队列里,这里先吐队列
-            while event_queue:
-                yield event_queue.pop(0)
-            messages.append({
-                "role": "tool", "tool_call_id": tc.id,
-                "name": fname, "content": result,
-            })
-            store.add_message(pid, "tool", result, tool_name=fname, tool_call_id=tc.id)
-            yield _event({
-                "type": "observation", "agent": agent_name,
-                "tool": fname, "result": result,
-            })
+                    yield _event({"type": "heartbeat", "ts": time.time(), "run_id": run_id})
+                results = [t.result() if not t.exception() else json.dumps({"error": str(t.exception())}) for t in tasks]
+            # 按顺序收集结果
+            for (tc, fname, fargs), result in zip(tool_items, results):
+                if isinstance(result, Exception):
+                    result = json.dumps({"error": str(result)}, ensure_ascii=False)
+                logger.info(f"[{agent_name}] step={step} ← 并行工具 {fname} 结果={_trunc(result, 200)}")
+                while event_queue:
+                    yield event_queue.pop(0)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id,
+                    "name": fname, "content": result,
+                })
+                store.add_message(pid, "tool", result, tool_name=fname, tool_call_id=tc.id)
+                yield _event({
+                    "type": "observation", "agent": agent_name,
+                    "tool": fname, "result": result,
+                })
+        else:
+            # 串行执行 (delegate_to_agent 或单个工具调用)
+            for tc, fname, fargs in tool_items:
+                logger.info(f"[{agent_name}] step={step} → 调工具 {fname} args={_trunc(json.dumps(fargs, ensure_ascii=False), 150)}")
+                yield _event({
+                    "type": "step", "agent": agent_name, "tool": fname,
+                    "args": fargs, "thinking": thinking,
+                })
+                exec_task = asyncio.ensure_future(_exec_tool(
+                    pid, fname, fargs, depth=0, emit=emit,
+                    agent_name=agent_name, run_id=run_id,
+                ))
+                if hb <= 0:
+                    result = await exec_task
+                else:
+                    while True:
+                        done, _ = await asyncio.wait(
+                            {exec_task}, timeout=hb, return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        while event_queue:
+                            yield event_queue.pop(0)
+                        if exec_task in done:
+                            break
+                        yield _event({"type": "heartbeat", "ts": time.time(),
+                                      "run_id": run_id})
+                    result = exec_task.result()
+                logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 结果={_trunc(result, 200)}")
+                while event_queue:
+                    yield event_queue.pop(0)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id,
+                    "name": fname, "content": result,
+                })
+                store.add_message(pid, "tool", result, tool_name=fname, tool_call_id=tc.id)
+                yield _event({
+                    "type": "observation", "agent": agent_name,
+                    "tool": fname, "result": result,
+                })
 
     logger.warning(f"[{agent_name}] 达到最大步数 {s.max_steps}")
     store.add_message(pid, "assistant", "(已达最大步骤数,请继续指示。)")

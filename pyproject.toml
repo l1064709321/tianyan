@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "novel-agent"
+version = "0.1.0"
+description = "多 Agent 协同小说创作系统"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "litellm>=1.40",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "PyYAML>=6.0",
+    "python-multipart>=0.0.9",
+    # 文件读取
+    "python-docx>=1.1",
+    "pypdf>=4.0",
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12",
+    "Markdown>=3.5",
+]
+
+[project.optional-dependencies]
+# 高性能 HTTP 解析 (仅 Linux/macOS, Windows 自动跳过)
+# pip install ".[fast]" 或 pip install -e ".[fast]"
+fast = [
+    "uvloop>=0.14; sys_platform != 'win32'",
+    "httptools>=0.5; sys_platform != 'win32'",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

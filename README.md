@@ -73,17 +73,36 @@
 
 ### 安装与启动
 
+#### Windows
+
+```powershell
+# 1. 克隆
+git clone https://github.com/l1064709321/xiaoshuo-agent.git
+cd xiaoshuo-agent
+
+# 2. 装依赖 (uvloop/httptools 会自动跳过)
+pip install -r requirements.txt
+
+# 3. 启动 (任选其一)
+python run.py                      # 直接启动
+start.bat                          # 双击或命令行运行 (自动检查依赖)
+na.bat start                       # 后台运行
+```
+
+#### macOS / Linux
+
 ```bash
 # 1. 克隆
 git clone https://github.com/l1064709321/xiaoshuo-agent.git
 cd xiaoshuo-agent
 
-# 2. 装依赖
+# 2. 装依赖 (自动安装 uvloop/httptools 高性能组件)
 pip install -r requirements.txt
 
-# 3. 启动(任选其一)
+# 3. 启动 (任选其一)
 python run.py                      # 直接启动
-bash start.sh                      # 一键启动(自动装依赖 + 后台运行)
+bash start.sh                      # 一键启动 (tkinter 桌面对话框)
+./na start                         # 后台运行
 ```
 
 打开浏览器访问 **http://localhost:8000/**
@@ -141,7 +160,12 @@ xiaoshuo-agent/
 ├── config.example.yaml # 配置示例
 ├── requirements.txt
 ├── run.py              # 入口
-├── start.sh            # 一键启动脚本
+├── start.sh            # 一键启动 (macOS/Linux)
+├── start.bat           # 一键启动 (Windows)
+├── na                  # 管理命令 (macOS/Linux)
+├── na.bat              # 管理命令 (Windows)
+├── launcher.py         # Web 卡片启动器
+├── launcher_tk.py      # tkinter 桌面启动器
 ├── pre-upload.sh       # 上传前安全扫描脚本
 └── .gitignore
 ```

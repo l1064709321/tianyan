@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Novel Agent 启动器 — 桌面对话框 (tkinter)
+"""小说Agent 启动器 — 桌面对话框 (tkinter)
 
 双击运行或 ./start_tk.sh:
 1. 弹出一个原生对话框窗口 (不是浏览器网页)
@@ -69,7 +69,7 @@ def start_app() -> bool:
 class LauncherApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Novel Agent 启动器")
+        self.root.title("小说Agent 启动器")
         self.root.geometry("440x360")
         self.root.resizable(False, False)
         self.root.configure(bg="#faf6ed")
@@ -103,7 +103,7 @@ class LauncherApp:
 
         # 标题
         tk.Label(
-            container, text="Novel Agent", bg="#faf6ed", fg="#2e1f15",
+            container, text="小说Agent", bg="#faf6ed", fg="#2e1f15",
             font=title_font,
         ).pack(pady=(0, 4))
 

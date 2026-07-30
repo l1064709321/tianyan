@@ -19,7 +19,7 @@ from .exporter import export_project, parse_bytes
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
 
-app = FastAPI(title="Novel Agent", version="0.1.0")
+app = FastAPI(title="小说Agent", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -573,7 +573,7 @@ def index():
     if os.path.exists(idx):
         with open(idx, "r", encoding="utf-8") as f:
             return f.read()
-    return "<h1>Novel Agent</h1><p>web/ 目录未找到</p>"
+    return "<h1>小说Agent</h1><p>web/ 目录未找到</p>"
 
 
 # ---------- 卡片启动器 (http://localhost:8000/launcher) ----------
@@ -582,7 +582,7 @@ LAUNCHER_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Novel Agent · 启动卡片</title>
+<title>小说Agent · 启动卡片</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -649,7 +649,7 @@ LAUNCHER_HTML = """<!DOCTYPE html>
 <body>
 <div class="card">
   <div class="logo">✦</div>
-  <div class="title">Novel Agent</div>
+  <div class="title">小说Agent</div>
   <div class="subtitle">小说创作 8 阶段工作流 · 技能市场</div>
   <div class="status checking" id="status">● 检查中...</div>
   <button class="btn btn-primary" id="enterBtn" onclick="enter()" style="display:none">直接进入应用</button>
@@ -714,20 +714,31 @@ def launcher_card():
 
 @app.post("/api/launcher/restart")
 def launcher_restart():
-    """通过卡片触发服务重启 (拉起一个新的 uvicorn 子进程)。"""
+    """通过卡片触发服务重启。优先用 na 脚本，否则走 Python 子进程。"""
     import subprocess
-    import os
-    # 脱离当前进程树,重启 na
+    import sys
+
     na_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "na")
-    if os.path.exists(na_path):
+
+    # 优先走 na 脚本（Linux/macOS）
+    if os.path.exists(na_path) and sys.platform != "win32":
         subprocess.Popen(
-            [na_path, "restart"],
+            ["bash", na_path, "restart"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        return {"ok": True, "message": "重启指令已发送"}
-    return {"ok": False, "error": "na 脚本未找到"}
+        return {"ok": True, "message": "重启指令已发送 (na)"}
+
+    # 跨平台回退：起一个新的 uvicorn 子进程
+    run_py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "run.py")
+    subprocess.Popen(
+        [sys.executable, run_py],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {"ok": True, "message": "重启指令已发送 (Python)"}
 
 
 def main() -> None:

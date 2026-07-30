@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Novel Agent 启动器 — 卡片界面
+"""小说Agent 启动器 — 卡片界面
 
 启动后:
 1. 提供卡片 HTML 界面 (http://localhost:9999/)
@@ -61,7 +61,7 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Novel Agent 启动器</title>
+<title>小说Agent 启动器</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -156,7 +156,7 @@ HTML = """<!DOCTYPE html>
 <body>
 <div class="card">
   <div class="logo">✦</div>
-  <div class="title">Novel Agent</div>
+  <div class="title">小说Agent</div>
   <div class="subtitle">小说创作 8 阶段工作流 · 技能市场</div>
   <div class="status checking" id="status">● 检查中...</div>
   <button class="btn btn-primary" id="launchBtn" onclick="launch()" style="display:none">
@@ -277,7 +277,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def main():
     print("=" * 50)
-    print("  Novel Agent 启动器")
+    print("  小说Agent 启动器")
     print("=" * 50)
     print(f"\n  卡片界面: http://localhost:{PORT}/")
     print(f"  主应用:   {APP_URL}")

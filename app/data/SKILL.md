@@ -1,17 +1,18 @@
 ---
 name: qidian-platinum-authors
 description: |
-  起点白金大神作家风格参考与全流程创作技能。
+  起点白金大神作家风格参考与全流程创作技能，已集成到小说Agent。
   覆盖111位顶尖作家的风格定位与核心技法，内置原文语料库（按场景标签索引）。
   支持半部小说续写、番外、同人、仿写等创作形式。
-  内置33维审计系统（去AI味、伏笔回收、角色一致性等）与AI编辑部流水线（扫榜小哥、大纲老手、枪手、审核编辑、改稿编辑多角色协作）。
+  内置33维审计系统（去AI味、伏笔回收、角色一致性等）与AI编辑部流水线（扫榜、大纲、枪手、审核、改稿多角色协作）。
   支持迭代写作：写完→审→改→再审→再改，最多N轮。
-  适用于小说创作中的风格借鉴、人设塑造、节奏把控、爽点设计、流派融合、卡文续写、文风仿写、稿件审计等全流程场景。
 ---
 
-# 起点白金大神作家风格参考 Skill（全流程创作版）
+# 起点白金大神作家风格参考 Skill（已集成到小说Agent）
 
 本技能融合了111位白金作家及经典作家的风格定位与创作方法论，内置原文语料库（精选段落+场景标签），整合半部小说续写引擎、33维审计系统、AI编辑部流水线，为小说创作提供从市场扫描、大纲设计、正文生成、质量审计到最终拍板的全流程支持。
+
+> 本技能已通过 `skill_adapter.py` 和 `skill_library.py` 集成到小说Agent 工具链中，通过 Agent 聊天空口调用即可，无需手动执行 CLI 命令。
 
 ## 目录
 
@@ -21,7 +22,7 @@ description: |
 - [四、半部小说续写引擎](#四半部小说续写引擎)
 - [五、多维审计系统](#五多维审计系统)
 - [六、AI 编辑部流水线](#六ai-编辑部流水线)
-- [七、CLI 命令速查](#七cli-命令速查)
+- [七、在小说Agent 中使用](#七在小说agent-中使用)
 
 ---
 
@@ -51,7 +52,7 @@ description: |
 
 ### 1.3 语料库如何工作
 
-当你调用 `deconstruct`、`ghostwrite`、`imitate` 时，系统会：
+当你通过小说Agent 调用 `match_author`、`get_author_reference` 时，系统会：
 
 1. 根据你的需求自动匹配 **场景类型**
 2. 从语料库中检索 **最相关的3段原文**
@@ -61,22 +62,6 @@ description: |
 **效果对比**：
 - 旧版：`请用[作者]风格写` → 模板废话，AI味重
 - 新版：直接塞3段[作者]原文 → 模型自己"看"出文风
-
-### 1.4 查看语料库
-
-```bash
-# 列出所有作者
-python3 main.py corpus
-
-# 查看某作者的语料
-python3 main.py corpus --author=[作者名]
-
-# 按场景筛选
-python3 main.py corpus --author=[作者名] --scene=battle
-
-# 按关键词搜索
-python3 main.py corpus --keyword=血
-```
 
 ---
 
@@ -169,16 +154,6 @@ python3 main.py corpus --keyword=血
 4. **注入原文参考**：从语料库中检索该大神的精选段落，作为 few-shot 参考。
 5. **输出续写方案**：给出作品体检报告、2-3 条后续情节路径、可选示范续写段落。
 
-### 4.2 使用方式
-
-```bash
-# 卡文诊断
-python3 main.py stuck --file=chapter.txt
-
-# 文风仿写（带原文参考）
-python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会" --author=[作者名]
-```
-
 ---
 
 ## 五、多维审计系统
@@ -244,106 +219,42 @@ python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会" --a
 最终拍板（你确认发布）
 ```
 
-### 6.3 老板怎么下指令
-
-| 场景 | 指令示例 |
-|:---|:---|
-| 启动全流程 | `python3 main.py pipeline --concept="赛博修仙+家族流" --author=[作者名] --rounds=3` |
-| 枪手代笔 | `python3 main.py ghostwrite --outline=大纲.txt --author=[作者名] --chapter=1 --words=3000` |
-| 审稿 | `python3 main.py audit --file=chapter.txt` |
-| 完整审计 | `python3 main.py full --file=chapter.txt` |
-| 文风仿写 | `python3 main.py imitate --file=sample.txt --topic="拍卖会" --author=[作者名]` |
-| 查看语料 | `python3 main.py corpus --author=[作者名] --scene=battle` |
-
 ---
 
-## 七、CLI 命令速查
+## 七、在小说Agent 中使用
 
-### 7.1 基础命令
+本技能已集成到小说Agent 的工具链中，通过以下方式调用：
 
-```bash
-# 列出所有作家
-python3 main.py list
-python3 main.py list --category=玄幻仙侠
+### 7.1 作家匹配
 
-# 搜索作家（支持别名）
-python3 main.py search --name=[作者名]
-python3 main.py search --keyword=克苏鲁
+在聊天中直接请求：
+- "帮我匹配写悬疑题材的作家"
+- "我想写玄幻爽文，推荐几个作家参考"
 
-# 深度拆解某作家风格
-python3 main.py deconstruct --name=[作者名]
-python3 main.py deconstruct --keyword=武侠
-```
+对应工具：`match_author(genre, style)` → 通过 `skill_library.py` 调用
 
-### 7.2 审计命令
+### 7.2 语料检索
 
-```bash
-# 33维审计
-python3 main.py audit --file=chapter.txt
-python3 main.py audit --file=chapter.txt --outline=outline.txt
+- "给我看看[作家]的战斗场面怎么写"
+- "找几段悬疑氛围的原文参考"
 
-# AI味检测
-python3 main.py ai --file=chapter.txt
+对应工具：`get_author_reference(author, scene)` → 从语料库检索原文
 
-# 黄金三章诊断
-python3 main.py opening --file=chapter.txt
+### 7.3 小说审计
 
-# 完整审计（33维 + AI味）
-python3 main.py full --file=chapter.txt
-```
+- "帮我审一下第3章"
+- "检查这段有没有AI味"
 
-### 7.3 创作命令
+对应工具：`audit_novel(text, outline)` → 33维审计 + AI味检测
 
-```bash
-# 文风分析
-python3 main.py style --file=chapter.txt
-python3 main.py style --file=chapter.txt --name=[作者名]
+### 7.4 卡文诊断
 
-# 文风仿写（带原文参考）
-python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会"
-python3 main.py imitate --file=sample.txt --topic="拍卖会" --author=[作者名]
+- "写到第5章卡住了，帮我诊断一下"
+- "这段读着不对劲，哪里有问题？"
 
-# 卡文诊断
-python3 main.py stuck --file=chapter.txt
+对应工具：`diagnose_stuck(text)` → 输出诊断报告 + 续写建议
 
-# 扫榜
-python3 main.py scout
-python3 main.py scout --category=玄幻仙侠
-
-# 生成大纲
-python3 main.py outline --concept="废柴逆袭"
-python3 main.py outline --concept="废柴逆袭" --volumes=5
-```
-
-### 7.4 流水线命令
-
-```bash
-# 枪手代笔（带原文语料参考）
-python3 main.py ghostwrite --outline=outline.txt --chapter=1 --words=3000
-python3 main.py ghostwrite --outline=outline.txt --author=[作者名] --chapter=1
-
-# 完整编辑部流水线（含迭代）
-python3 main.py pipeline --concept="废柴逆袭"
-python3 main.py pipeline --concept="废柴逆袭" --author=[作者名] --rounds=3
-```
-
-### 7.5 语料库命令
-
-```bash
-# 列出所有作者
-python3 main.py corpus
-
-# 查看某作者的语料
-python3 main.py corpus --author=[作者名]
-
-# 按场景筛选
-python3 main.py corpus --author=[作者名] --scene=battle
-
-# 按关键词搜索
-python3 main.py corpus --keyword=血
-```
-
-### 7.6 工作室黑话速查
+### 7.5 工作室黑话速查
 
 - **崩了**：战力/逻辑/人设前后矛盾
 - **水了**：章节内容空洞，无剧情推进

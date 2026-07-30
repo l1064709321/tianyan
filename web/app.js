@@ -1,4 +1,4 @@
-// Novel Agent 前端:Codex 式聊天 + 步骤展示 + 多格式 + 系统打磨
+// 小说Agent 前端:Codex 式聊天 + 步骤展示 + 多格式 + 系统打磨
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
@@ -76,6 +76,42 @@ const AGENT_ICONS = {
   // 兼容旧名
   planner: "📐", writer: "✍️", editor: "🔧",
 };
+
+// 工具名 → 中文标签
+const TOOL_CN = {
+  generate_outline: "生成大纲",
+  continue_writing: "续写正文",
+  polish: "润色改写",
+  add_element: "添加设定",
+  query_project: "查询项目",
+  delegate_to_agent: "委派专家",
+  manage_outline: "细纲管理",
+  load_context: "加载上下文",
+  quality_check: "一致性检查",
+  scan_bestseller: "扫榜调研",
+  analyze_novel: "拆书解构",
+  review_chapter: "毒舌审稿",
+  list_authors: "列出作家",
+  match_author: "匹配作家",
+  get_author_reference: "取作家参考",
+  deconstruct: "拆书解构",
+  audit_novel: "33维审计",
+  detect_ai: "AI味检测",
+  diagnose_opening: "黄金三章诊断",
+  analyze_style: "文风分析",
+  imitate_style: "文风仿写",
+  diagnose_stuck: "卡文诊断",
+  ghostwrite: "枪手代笔",
+  full_audit: "完整审计",
+  web_fetch: "网页抓取",
+  web_search: "网页搜索",
+  browser_fetch: "浏览器抓取",
+  browser_screenshot: "浏览器截图",
+};
+
+function cnTool(name) {
+  return TOOL_CN[name] || name.replace(/_/g, " ");
+}
 
 // ---------- 工具 ----------
 async function api(path, opts = {}) {
@@ -564,7 +600,7 @@ function appendMessage(role, content, streaming) {
   chatHistory.push(msg);
   const div = document.createElement("div");
   div.className = `msg ${role}`;
-  div.innerHTML = `<div class="role ${role}">${role === "user" ? "你" : "Agent"}</div>
+  div.innerHTML = `<div class="role ${role}">${role === "user" ? "你" : "✦ 小说Agent"}</div>
     <div class="bubble"></div>`;
   $("#chat").appendChild(div);
   msg.el = div.querySelector(".bubble");
@@ -595,15 +631,10 @@ async function send(text) {
   autoGrow();
   appendMessage("user", text);
 
+  // 左侧：隐藏文件树，显示思考面板
+  showThinkPanel();
+
   const assistant = appendMessage("assistant", "", true);
-  // 思考容器:独立的思考过程展示区 (像 AI 在自言自语)
-  const thinkBox = document.createElement("div");
-  thinkBox.className = "think-box";
-  thinkBox.innerHTML = `<div class="think-loading">
-    <span class="think-dot"></span>
-    <span class="think-text">正在思考<span class="thinking-dots"></span></span>
-  </div>`;
-  assistant.el.appendChild(thinkBox);
 
   try {
     const res = await fetch(`/api/projects/${currentProject.id}/chat`, {
@@ -624,73 +655,109 @@ async function send(text) {
         if (!line.startsWith("data: ")) continue;
         let evt;
         try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-        handleEvent(evt, assistant, thinkBox);
+        handleEvent(evt, assistant);
       }
     }
-    // 清除残留的 loading
-    const loading = thinkBox.querySelector(".think-loading");
-    if (loading) loading.remove();
+    // 清除 loading
+    removeThinkLoading();
   } catch (e) {
-    const loading = thinkBox.querySelector(".think-loading");
-    if (loading) loading.remove();
+    removeThinkLoading();
     assistant.el.innerHTML = `<span class="err">连接失败: ${esc(e.message)}</span>`;
+    hideThinkPanel();
   }
 }
 
-function handleEvent(evt, assistant, thinkBox) {
+// ============ 左侧思考面板 ============
+function showThinkPanel() {
+  const tree = $("#tree");
+  const panel = $("#think-panel");
+  const stream = $("#tp-stream");
+  if (tree) tree.classList.add("hidden");
+  if (panel) panel.classList.remove("hidden");
+  // 重置
+  if (stream) {
+    stream.innerHTML = `<div class="tp-entry tp-loading">
+      <span class="tp-dot"></span>
+      <span class="tp-text">正在思考<span class="thinking-dots"></span></span>
+    </div>`;
+  }
+}
+
+function hideThinkPanel() {
+  const tree = $("#tree");
+  const panel = $("#think-panel");
+  if (tree) tree.classList.remove("hidden");
+  if (panel) panel.classList.add("hidden");
+}
+
+function removeThinkLoading() {
+  const loading = $("#tp-stream .tp-loading");
+  if (loading) loading.remove();
+}
+
+function appendThink(html) {
+  removeThinkLoading();
+  const stream = $("#tp-stream");
+  if (!stream) return;
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  stream.appendChild(div.firstElementChild);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+function handleEvent(evt, assistant) {
   const bubble = assistant.el;
   switch (evt.type) {
     case "start":
       window.__naRunStartTs = Date.now();
       break;
     case "delegate": {
-      // 委派:在思考容器中显示
+      // 委派: 左侧思考面板显示
       const toLbl = AGENT_LABELS[evt.to] || evt.to;
       const toIcon = AGENT_ICONS[evt.to] || "↪";
       if (evt.to) updateActiveAgent(evt.to);
-      const loading = thinkBox.querySelector(".think-loading");
-      if (loading) loading.remove();
-      const div = document.createElement("div");
-      div.className = "think-delegate";
-      div.innerHTML = `<span class="td-icon">${toIcon}</span>
-        <span class="td-text">委派给 <b>${toLbl}</b></span>
-        <span class="td-task">${esc((evt.task || "").slice(0, 80))}${evt.task && evt.task.length > 80 ? "…" : ""}</span>`;
-      thinkBox.appendChild(div);
+      const task = (evt.task || "").slice(0, 60);
+      appendThink(`<div class="tp-entry tp-delegate">
+        <span class="tp-icon">${toIcon}</span>
+        <span class="tp-text"><span class="tp-label delegate">委派</span> → <b>${toLbl}</b>${task ? "：" + esc(task) : ""}</span>
+      </div>`);
       scrollChat();
       break;
     }
     case "step": {
-      const loading = thinkBox.querySelector(".think-loading");
-      if (loading) loading.remove();
       const ag = evt.agent || "";
       const agLbl = ag ? (AGENT_LABELS[ag] || ag) : "";
       const agIcon = ag ? (AGENT_ICONS[ag] || "") : "";
       const step = { tool: evt.tool, args: evt.args, thinking: evt.thinking || "", agent: ag };
       assistant.steps.push(step);
 
-      // 思考过程:放入独立的 thinkBox
+      // 思考过程: 左侧面板
       if (evt.thinking) {
-        const thinkDiv = document.createElement("div");
-        thinkDiv.className = "think-card";
-        const agTag = agIcon ? `<span class="tc-agent">${agIcon} ${esc(agLbl)}</span>` : "";
-        thinkDiv.innerHTML = `<div class="tc-head">
-          ${agTag}
-          <span class="tc-label">🧠 思考</span>
-        </div>
-        <div class="tc-body">${esc(evt.thinking)}</div>`;
-        thinkBox.appendChild(thinkDiv);
+        const agTag = agIcon ? `${agIcon} ${esc(agLbl)}` : "";
+        appendThink(`<div class="tp-entry tp-think">
+          <span class="tp-dot"></span>
+          <span class="tp-text">${agTag ? `<b>${agTag}</b>：` : ""}${esc(evt.thinking)}</span>
+        </div>`);
       }
 
-      // 工具调用卡片:紧凑展示
+      // 工具调用: 左侧面板 (紧凑条目)
+      const toolName = cnTool(evt.tool || "");
+      appendThink(`<div class="tp-entry tp-tool" data-toolstep="${assistant.steps.length - 1}">
+        <span class="tp-dot"></span>
+        ${agIcon ? `<span class="tp-icon">${agIcon}</span>` : ""}
+        <span class="tp-text"><span class="tp-label tool">调用</span> <b>${esc(toolName)}</b>${agIcon ? " · " + esc(agLbl) : ""}</span>
+      </div>`);
+
+      // 工具调用卡片: 右侧紧凑展示 (可折叠)
       const toolDiv = document.createElement("div");
       toolDiv.className = "step-card";
       const depthIndent = evt.depth ? `style="margin-left:${evt.depth * 12}px"` : "";
-      const toolName = (evt.tool || "").replace(/_/g, " ");
+      const toolName2 = cnTool(evt.tool || "");
       toolDiv.innerHTML = `<div class="sc-head" ${depthIndent}>
         <span class="sc-dot"></span>
         ${agIcon ? `<span class="sc-agent">${agIcon} ${esc(agLbl)}</span>` : ""}
         <span class="sc-icon">🔧</span>
-        <span class="sc-tool">${esc(toolName)}</span>
+        <span class="sc-tool">${esc(toolName2)}</span>
         <span class="sc-status">执行中…</span>
       </div>
       <div class="sc-body">
@@ -711,15 +778,20 @@ function handleEvent(evt, assistant, thinkBox) {
         step.resultEl.innerHTML = `<span class="sc-label">结果</span>${prettyResult(evt.result)}`;
         step.headEl.classList.add("done");
         if (step.statusEl) step.statusEl.textContent = "✓ 完成";
-        // 完成后自动折叠
         step.cardEl.classList.add("collapsed");
+
+        // 左侧面板: 标记对应工具条目为完成
+        const tpTool = $(`#tp-stream [data-toolstep="${assistant.steps.length - 1}"]`);
+        if (tpTool) {
+          tpTool.classList.add("tp-done");
+          tpTool.querySelector(".tp-dot").style.background = "var(--green)";
+        }
       }
       scrollChat();
       break;
     }
     case "answer_start": {
-      const loading = thinkBox.querySelector(".think-loading");
-      if (loading) loading.remove();
+      removeThinkLoading();
       assistant.answerEl = document.createElement("div");
       assistant.answerEl.className = "md answer-body";
       bubble.appendChild(assistant.answerEl);
@@ -760,6 +832,11 @@ function handleEvent(evt, assistant, thinkBox) {
       const errMsg = evt.message || "";
       const isApiKeyErr = errMsg.includes("API Key") || errMsg.includes("api_key") || errMsg.includes("Missing credentials");
       const isLoop = evt.reason === "loop_detected" || errMsg.includes("超限") || errMsg.includes("卡循环");
+      // 左侧面板也显示错误
+      appendThink(`<div class="tp-entry tp-error">
+        <span class="tp-dot"></span>
+        <span class="tp-text"><span class="tp-label error">错误</span> ${esc(errMsg)}</span>
+      </div>`);
       if (isApiKeyErr) {
         bubble.innerHTML += `<div class="err err-apikey">
           <div class="err-icon">🔑</div>
@@ -782,9 +859,19 @@ function handleEvent(evt, assistant, thinkBox) {
       window.__naRunStartTs = null;
       const hdErr = document.getElementById("run-elapsed");
       if (hdErr) { hdErr.textContent = ""; hdErr.hidden = true; }
+      hideThinkPanel();
       break;
     }
     case "done":
+      removeThinkLoading();
+      // 左侧面板: 完成徽章
+      appendThink(`<div class="tp-done-badge">
+        <span class="tp-done-icon">✓</span> 完成 · ${evt.steps} 步
+        ${evt.stats ? ` · ${evt.stats.chapters}章/${evt.stats.total_chars}字` : ""}
+      </div>`);
+      // 1.5 秒后恢复文件树
+      setTimeout(() => hideThinkPanel(), 1500);
+
       if (!assistant.answerEl) {
         const note = document.createElement("div");
         note.className = "done-note";
@@ -805,7 +892,7 @@ function handleEvent(evt, assistant, thinkBox) {
         api(`/api/projects/${currentProject.id}`).then((p) => {
           if (p && currentProject) {
             currentProject.chapters = p.chapters || [];
-            currentProject.elements = p.elements || currentProject.elements;
+            currentProject.elements = p.elements || currentProject.meta;
             currentProject.meta = p.meta || currentProject.meta;
             renderTree();
           }

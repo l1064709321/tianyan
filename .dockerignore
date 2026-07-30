@@ -1,0 +1,11 @@
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+data/
+export/
+*.log
+.env
+*.pid
+na-server.log

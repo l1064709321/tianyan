@@ -145,35 +145,68 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .bubble code{background:var(--paper4);padding:1px 5px;border-radius:3px;font-family:var(--mono);font-size:12px;
   color:var(--accent)}
 
-/* ============ 思考容器 (think-box) — 独立的 AI 思考过程展示区 ============ */
-.think-box{margin:8px 0 12px;display:flex;flex-direction:column;gap:6px}
-/* 思考卡片: AI 自言自语 */
-.think-card{background:linear-gradient(135deg,rgba(161,61,61,.04),rgba(90,107,63,.04));
-  border:1px solid var(--border);border-left:3px solid var(--accent);
-  border-radius:0 var(--radius) var(--radius) 0;padding:10px 14px}
-.think-card .tc-head{display:flex;align-items:center;gap:6px;margin-bottom:6px}
-.think-card .tc-agent{font-size:11px;font-weight:600;color:var(--accent);background:rgba(161,61,61,.08);
-  padding:1px 8px;border-radius:10px;font-family:var(--sans)}
-.think-card .tc-label{font-size:11px;font-weight:600;color:var(--accent2);font-family:var(--sans);
-  letter-spacing:.3px}
-.think-card .tc-body{font-size:13px;color:var(--ink2);line-height:1.8;white-space:pre-wrap;
-  word-break:break-word;font-family:var(--serif);font-style:italic}
-/* 委派事件 (在思考容器中) */
-.think-delegate{display:flex;align-items:center;gap:8px;padding:8px 12px;
-  background:rgba(61,107,139,.06);border:1px dashed var(--blue);border-radius:var(--radius-sm);
-  font-size:12px;font-family:var(--sans)}
-.think-delegate .td-icon{font-size:16px}
-.think-delegate .td-text{color:var(--ink);white-space:nowrap}
-.think-delegate .td-text b{color:var(--blue)}
-.think-delegate .td-task{color:var(--muted);font-style:italic;flex:1;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* 加载动画 */
-.think-loading{display:flex;align-items:center;gap:8px;padding:8px 0}
-.think-loading .think-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);
-  animation:pulse 1.2s infinite}
-.think-loading .think-text{color:var(--muted);font-size:13px;font-family:var(--sans);
-  display:flex;align-items:center;gap:2px}
+/* ============ 左侧思考面板 (think-panel) — 替换文件树的实时思考流 ============ */
+.think-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;margin-top:4px}
+.think-panel.hidden{display:none}
+.tp-head{display:flex;align-items:center;gap:7px;padding:8px 10px;
+  background:linear-gradient(135deg,rgba(161,61,61,.08),rgba(90,107,63,.06));
+  border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;
+  font-size:12px;font-weight:600;color:var(--ink);font-family:var(--sans)}
+.tp-head-icon{font-size:15px}
+.tp-head-title{flex:1}
+.tp-pulse{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite;flex-shrink:0}
+/* 思考流: 可滚动,条目从上到下依次排列 */
+.tp-stream{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:4px;
+  padding-right:4px;scroll-behavior:smooth}
+.tp-stream::-webkit-scrollbar{width:4px}
+.tp-stream::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+/* 每条思考条目 */
+.tp-entry{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;
+  border-radius:var(--radius-sm);font-size:11.5px;line-height:1.6;
+  font-family:var(--sans);border-left:2px solid transparent;
+  animation:tpSlideIn .25s ease}
+.tp-entry:hover{background:rgba(46,31,21,.03)}
+.tp-dot{width:6px;height:6px;border-radius:50%;margin-top:6px;flex-shrink:0;
+  background:var(--accent);opacity:.7}
+.tp-entry.tp-done .tp-dot{background:var(--green);opacity:.9}
+.tp-entry.tp-tool .tp-dot{background:var(--yellow)}
+.tp-entry.tp-delegate .tp-dot{background:var(--blue)}
+.tp-entry.tp-result .tp-dot{background:var(--green)}
+.tp-entry.tp-error .tp-dot{background:var(--red)}
+.tp-text{flex:1;word-break:break-word;color:var(--ink2)}
+.tp-text b{color:var(--ink);font-weight:600}
+.tp-text code{font-family:var(--mono);font-size:10.5px;background:var(--paper3);padding:1px 5px;border-radius:3px}
+.tp-label{font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;
+  margin-right:4px;white-space:nowrap;font-family:var(--sans)}
+.tp-label.think{background:rgba(161,61,61,.08);color:var(--accent)}
+.tp-label.tool{background:rgba(154,107,31,.1);color:var(--yellow)}
+.tp-label.delegate{background:rgba(61,107,139,.1);color:var(--blue)}
+.tp-label.result{background:rgba(90,107,63,.1);color:var(--green)}
+.tp-label.error{background:rgba(161,61,61,.1);color:var(--red)}
+/* 委派入口 */
+.tp-entry.tp-delegate{border-left-color:var(--blue);background:rgba(61,107,139,.04)}
+.tp-entry.tp-delegate .tp-icon{font-size:14px;flex-shrink:0}
+/* 工具调用 */
+.tp-entry.tp-tool{border-left-color:var(--yellow);background:rgba(154,107,31,.03)}
+.tp-entry.tp-tool .tp-icon{font-size:13px;flex-shrink:0}
+/* 结果 */
+.tp-entry.tp-result{border-left-color:var(--green);background:rgba(90,107,63,.03)}
+.tp-entry.tp-result .tp-text{font-size:10.5px;color:var(--muted);font-family:var(--mono)}
+/* 错误 */
+.tp-entry.tp-error{border-left-color:var(--red);background:rgba(161,61,61,.04)}
+/* 加载中 */
+.tp-entry.tp-loading{border-left-color:transparent}
+.tp-entry.tp-loading .tp-dot{animation:pulse 1.2s infinite}
+.tp-entry.tp-loading .tp-text{color:var(--muted);display:flex;align-items:center;gap:2px}
+/* 完成徽章 */
+.tp-done-badge{display:flex;align-items:center;gap:6px;padding:8px 10px;margin-top:4px;
+  border-radius:var(--radius-sm);background:rgba(90,107,63,.06);
+  border:1px solid var(--green);font-size:12px;color:var(--green);font-weight:600}
+.tp-done-badge .tp-done-icon{font-size:14px}
+@keyframes tpSlideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.85)}}
+/* 思考面板激活时隐藏树 */
+.tree.hidden{display:none}
 
 /* ============ 工具调用卡片 (step-card) — 紧凑、可折叠 ============ */
 .step-card{margin:6px 0;border:1px solid var(--border);border-radius:var(--radius-sm);

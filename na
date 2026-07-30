@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Novel Agent 一键管理命令
+# 小说Agent 一键管理命令
 # 用法:
 #   na          启动服务 (默认)
 #   na start    启动
@@ -50,7 +50,7 @@ do_start() {
     return 1
   fi
   echo "==> 检查依赖..."
-  python -m pip install -q -r requirements.txt 2>&1 | tail -2 || true
+  python -m pip install -q -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple 2>&1 | tail -2 || true
   echo "==> 启动服务 (目录: $DIR)..."
   nohup python run.py > "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"

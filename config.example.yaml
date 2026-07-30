@@ -1,4 +1,4 @@
-# Novel Agent 配置文件示例
+# 小说Agent 配置文件示例
 # 把它复制为 ~/.novel-agent/config.yaml 或项目根目录 config.yaml,或用环境变量 NOVEL_AGENT_CONFIG 指定。
 # api_key 也可以只设环境变量 (OPENAI_API_KEY / GEMINI_API_KEY / DEEPSEEK_API_KEY 等),这里则可不填。
 

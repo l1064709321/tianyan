@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  novel-agent:
+    build: .
+    container_name: novel-agent
+    ports:
+      - "8000:8000"
+    volumes:
+      # 数据持久化：项目/章节/设定存本地
+      - ./data:/data
+      # 配置文件挂载
+      - ~/.novel-agent:/root/.novel-agent:ro
+    environment:
+      - NOVEL_AGENT_DATA_DIR=/data
+      # API Key 通过环境变量注入（也可通过挂载的 config.yaml 配置）
+      # - DEEPSEEK_API_KEY=sk-xxx
+      # - OPENAI_API_KEY=sk-xxx
+    restart: unless-stopped

@@ -3,16 +3,16 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Novel Agent</title>
+<title>小说Agent</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>" />
-  <link rel="stylesheet" href="/static/style.css?v=33" />
+  <link rel="stylesheet" href="/static/style.css?v=34" />
 </head>
 <body>
 <div class="app">
   <!-- 左侧栏 (IDE 式文件树) -->
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <span class="logo">✦</span> Novel Agent
+      <span class="logo">✦</span> 小说Agent
       <button class="btn ghost sm sidebar-close" id="sidebar-close">✕</button>
     </div>
 
@@ -32,6 +32,21 @@
         <div class="tree-empty-icon">📂</div>
         <p>选择或新建一个项目</p>
         <p class="muted">章节、设定、素材将在此以文件树形式展示</p>
+      </div>
+    </div>
+
+    <!-- 思考面板 (Agent 运行时替换文件树) -->
+    <div class="think-panel hidden" id="think-panel">
+      <div class="tp-head">
+        <span class="tp-head-icon">🧠</span>
+        <span class="tp-head-title">思考过程</span>
+        <span class="tp-pulse"></span>
+      </div>
+      <div class="tp-stream" id="tp-stream">
+        <div class="tp-entry tp-loading">
+          <span class="tp-dot"></span>
+          <span class="tp-text">正在思考<span class="thinking-dots"></span></span>
+        </div>
       </div>
     </div>
     <div class="tree-actions">
@@ -302,6 +317,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=35"></script>
+<script src="/static/app.js?v=37"></script>
 </body>
 </html>

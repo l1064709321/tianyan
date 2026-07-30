@@ -4,6 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue) 
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green) 
+![Docker](https://img.shields.io/badge/Docker-支持-2496ED)
 [![自定义协议](https://img.shields.io/badge/📄-自定义协议-0052d9)](USER_AGREEMENT.md)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-blueviolet)](https://www.gnu.org/licenses/agpl-3.0.html)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0-red)](https://www.gnu.org/licenses/gpl-3.0.html)

@@ -78,7 +78,7 @@
 
 ```powershell
 # 1. 克隆
-git clone https://github.com/l1064709321/saga.git
+git clone https://github.com/l1064709321/tianyan.git
 cd saga
 
 # 2. 装依赖 (uvloop/httptools 会自动跳过)
@@ -94,7 +94,7 @@ na.bat start                       # 后台运行
 
 ```bash
 # 1. 克隆
-git clone https://github.com/l1064709321/saga.git
+git clone https://github.com/l1064709321/tianyan.git
 cd saga
 
 # 2. 装依赖 (自动安装 uvloop/httptools 高性能组件)

@@ -100,14 +100,22 @@ _GENRE_MATCH = {
     "群像": ["烽火戏诸侯", "猫腻", "辰东"],
 }
 
+# 女频作家集合 (category 含 "女频" 或公认女频作者)
+_FEMALE_AUTHORS = {
+    "吱吱", "叶非夜", "丁墨", "容光", "天下归元", "桩桩", "桐华",
+    "辛夷坞", "顾漫", "唐七公子", "匪我思存", "流潋紫", "寐语者",
+    "关心则乱", "电线", "九夜茴", "饶雪漫",
+}
 
-def match_author(genre: str, style: str = "", premise: str = "") -> list[dict]:
-    """根据题材/文风/设定匹配最合适的作家 (返回 1-3 位)。
+
+def match_author(genre: str, style: str = "", premise: str = "", audience: str = "") -> list[dict]:
+    """根据题材/文风/设定/频道匹配最合适的作家 (返回 1-3 位)。
 
     匹配规则:
     1. 题材关键词命中 _GENRE_MATCH 的优先返回
-    2. 返回的作家附带 methodology 摘要 (流派/核心原则/节奏公式/句式/常用词)
-    3. 最多返回 3 位,避免 Prompt 过长
+    2. 若指定 audience (男频/女频), 过滤掉不属于该频道的作家
+    3. 返回的作家附带 methodology 摘要 (流派/核心原则/节奏公式/句式/常用词)
+    4. 最多返回 3 位,避免 Prompt 过长
     """
     # 收集候选
     candidates: list[str] = []
@@ -117,9 +125,27 @@ def match_author(genre: str, style: str = "", premise: str = "") -> list[dict]:
             for a in authors:
                 if a not in candidates:
                     candidates.append(a)
-    # 没匹配上时,按题材大类给默认推荐
+    # 没匹配上时,按频道给默认推荐
     if not candidates:
-        candidates = ["猫腻", "烽火戏诸侯", "忘语"]  # 通用万金油
+        if audience == "女频":
+            candidates = ["吱吱", "叶非夜", "容光"]
+        else:
+            candidates = ["猫腻", "烽火戏诸侯", "忘语"]  # 男频通用万金油
+
+    # 按频道过滤
+    if audience == "女频":
+        # 女频: 只保留女频作家
+        filtered = [a for a in candidates if a in _FEMALE_AUTHORS]
+        if filtered:
+            candidates = filtered
+        elif not any(a in _FEMALE_AUTHORS for a in candidates):
+            # 题材匹配到的全是男频作家, 但用户要女频 → 补女频作家
+            candidates = ["吱吱", "叶非夜", "容光"]
+    elif audience == "男频":
+        # 男频: 排除女频作家
+        filtered = [a for a in candidates if a not in _FEMALE_AUTHORS]
+        if filtered:
+            candidates = filtered
 
     # 取前 3 位,附带方法论摘要
     result = []

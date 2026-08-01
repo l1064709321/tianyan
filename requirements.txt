@@ -20,3 +20,12 @@ Markdown>=3.5             # .md 渲染
 
 # 文件导出
 # docx 复用 python-docx;html 用 Markdown;pdf 由前端打印
+
+# ===== 联网抓取 =====
+httpx>=0.27               # 通用 HTTP 客户端 (web_fetch / web_search)
+readability-lxml>=0.8     # 网页正文提取
+lxml>=5.0                 # HTML 解析 (BeautifulSoup 后端)
+playwright>=1.40          # JS 渲染抓取 (browser_fetch: 起点/番茄等 SPA 榜单页)
+# 首次使用需下载 Chromium 内核 (内核是平台二进制, 装各平台系统目录, 不进项目):
+#   Linux/macOS: ./setup_browser.sh   (已固化国内镜像源, 下载快)
+#   Windows:     setup_browser.bat    (已固化国内镜像源, 下载快)

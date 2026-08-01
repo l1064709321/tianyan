@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>小说Agent</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>" />
-  <link rel="stylesheet" href="/static/style.css?v=34" />
+  <link rel="stylesheet" href="/static/style.css?v=__VERSION__" />
 </head>
 <body>
 <div class="app">
@@ -21,6 +21,7 @@
       <button class="btn ghost proj-select-btn" id="proj-select-btn">
         <span id="proj-select-label">选择项目 ▾</span>
       </button>
+      <button class="btn ghost sm proj-new-btn" id="proj-new-btn" title="新建项目"><span class="plus-icon">＋</span> 新建</button>
       <div class="menu proj-menu" id="proj-menu">
         <button class="proj-opt" id="new-project-opt">+ 新建项目…</button>
       </div>
@@ -286,6 +287,12 @@
   <div class="modal-card">
     <h3>新建小说项目</h3>
     <label>项目名称<input id="p-name" /></label>
+    <label>频道
+      <div class="audience-switch" id="p-audience">
+        <button type="button" class="aud-btn active" data-val="男频">♂ 男频</button>
+        <button type="button" class="aud-btn" data-val="女频">♀ 女频</button>
+      </div>
+    </label>
     <label>类型<input id="p-genre" placeholder="悬疑/科幻/仙侠…" /></label>
     <label>文风<input id="p-style" placeholder="冷峻/幽默/细腻…" /></label>
     <label>核心设定<textarea id="p-premise" rows="3"></textarea></label>
@@ -317,6 +324,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=37"></script>
+<script src="/static/app.js?v=__VERSION__"></script>
 </body>
 </html>

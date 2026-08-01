@@ -28,6 +28,8 @@ from .llm import chat, stream
 def _project_brief(pid: str) -> str:
     p = store.get_project(pid) or {}
     parts = []
+    if p.get("audience"):
+        parts.append(f"频道: {p['audience']}")
     if p.get("genre"):
         parts.append(f"类型: {p['genre']}")
     if p.get("style"):
@@ -563,14 +565,90 @@ async def scan_bestseller(
     genre: str = "通用",
     preference: str = "",
 ) -> dict:
-    """扫榜调研:基于 2026 网文市场数据 + 用户偏好,分析热门题材与流量赛道。"""
+    """扫榜调研:先真实联网抓取各平台榜单,再用 LLM 基于真实数据分析热门题材。
+
+    数据来源(按优先级):
+    1. Bing 搜索 "<genre>小说 排行榜 2026" 取真实榜单页 URL
+    2. 直接抓取主流网文平台榜单页 (起点/番茄/七猫/晋江)
+    3. 把抓到的真实文本喂给 LLM 做趋势分析 (而非让 LLM 凭训练数据空想)
+    """
+    import time as _time
+
+    # ---------- 第 1 步: 真实联网采集 ----------
+    # 主流网文平台榜单页 (genre 为中文题材词, 用于搜索关键词)
+    genre_kw = genre.strip() or "小说"
+    search_queries = [
+        f"{genre_kw} 排行榜 2026",
+        f"{genre_kw}小说 热门 起点 番茄",
+        f"网文 {genre_kw} 趋势 番茄小说 七猫",
+    ]
+    fetched_texts: list[str] = []
+    fetched_sources: list[dict] = []
+    fetched_count = 0
+
+    # 1a. Bing 搜索取真实结果
+    for q in search_queries:
+        sr = await _web_search(q, max_results=5)
+        if sr.get("results"):
+            for item in sr["results"][:3]:
+                fetched_sources.append({"type": "search", "query": q,
+                                        "title": item.get("title", ""), "url": item.get("url", "")})
+            # 抓取前几个搜索结果页正文
+            for item in sr["results"][:2]:
+                url = item.get("url", "")
+                if not url.startswith(("http://", "https://")):
+                    continue
+                fr = await _web_fetch(url, max_chars=2000)
+                if fr.get("content") and fr.get("content_chars", 0) > 100:
+                    fetched_texts.append(f"[来源: {fr.get('title', url)[:60]}]\n{fr['content'][:1500]}")
+                    fetched_count += 1
+                    if fetched_count >= 4:
+                        break
+            if fetched_count >= 4:
+                break
+
+    # 1b. 直接抓主流平台榜单页 (不依赖搜索, 提高命中率)
+    rank_urls = [
+        ("起点中文网·畅销榜", "https://www.qidian.com/rank/yuepiao/"),
+        ("番茄小说·榜单", "https://fanqienovel.com/rank/most_read"),
+        ("七猫小说·排行榜", "https://www.qimao.com/rank/"),
+    ]
+    for label, url in rank_urls:
+        if fetched_count >= 6:
+            break
+        fr = await _web_fetch(url, max_chars=2000)
+        if fr.get("content") and fr.get("content_chars", 0) > 100:
+            fetched_texts.append(f"[来源: {label}]\n{fr['content'][:1500]}")
+            fetched_sources.append({"type": "rank_page", "label": label, "url": url,
+                                    "chars": fr.get("content_chars", 0)})
+            fetched_count += 1
+
+    real_data_block = ""
+    if fetched_texts:
+        real_data_block = (
+            "\n\n===== 本次真实联网采集到的榜单/搜索数据 (以下为真实抓取内容, 非你的训练数据) =====\n"
+            + "\n\n---\n\n".join(fetched_texts)
+            + "\n===== 真实数据结束 =====\n\n"
+        )
+
+    # ---------- 第 2 步: LLM 基于真实数据分析 ----------
     # 原理11 幻觉约束:声明数据来源,禁止编造具体排名/作品名/阅读量
     system = (
         "你是网文市场分析师,精通各大平台(起点/番茄/晋江/七猫)的热门榜单与流量趋势。"
-        "【数据来源声明】你掌握的是训练数据内的市场印象,非实时榜单。"
-        "不得编造具体排名数字、具体作品名、具体阅读量;只能说趋势/画像/题材热度档位。"
-        "严格只输出 JSON,不要任何额外文字。"
     )
+    if real_data_block:
+        system += (
+            "【重要】本次分析必须基于上方「真实联网采集到的数据」进行。"
+            "如真实数据中包含具体作品名/题材/平台信息, 可以引用; "
+            "真实数据未覆盖的部分, 用你的市场印象补充, 但需标注「(印象数据)」。"
+            "严格只输出 JSON,不要任何额外文字。"
+        )
+    else:
+        system += (
+            "【数据来源声明】本次未能联网采集到数据, 你掌握的是训练数据内的市场印象,非实时榜单。"
+            "不得编造具体排名数字、具体作品名、具体阅读量;只能说趋势/画像/题材热度档位。"
+            "严格只输出 JSON,不要任何额外文字。"
+        )
     schema_hint = {
         "market_overview": "市场总体趋势(100字)",
         "hot_genres": [
@@ -578,7 +656,7 @@ async def scan_bestseller(
         ],
         "recommended_direction": "结合用户偏好,推荐 1-2 个可写方向(200字)",
         "risk_warning": "红海/同质化风险提示",
-        "data_source_note": "基于训练数据推断,建议联网核实最新数据",
+        "data_source_note": "说明本次数据来源(联网抓取/印象推断)",
     }
     # 原理5 Few-shot:用规则怪谈/民俗悬疑示意锁格式
     few_shot = (
@@ -594,12 +672,14 @@ async def scan_bestseller(
             ],
             "recommended_direction": "建议优先写规则怪谈+民俗底色,首章即抛出诡异规则制造悬念。",
             "risk_warning": "同质化严重,大量跟风作品,需在设定上做差异化。",
-            "data_source_note": "基于训练数据推断,建议联网核实最新数据",
+            "data_source_note": "基于联网抓取的番茄/七猫榜单数据 + 市场印象",
         }, ensure_ascii=False)
     )
     user = (
         f"目标题材:{genre}\n用户偏好:{preference or '(未指定,请推荐当前最热赛道)'}\n"
-        f"请基于市场印象,扫描热门题材并给出方向建议(不要编造具体排名/作品名/阅读量)。\n"
+        f"{real_data_block}"
+        f"请基于上述{'真实联网数据' if real_data_block else '市场印象'},"
+        f"扫描热门题材并给出方向建议。\n"
         f"{few_shot}\n\n"
         f"现在请按上述示例格式输出,只输出 JSON,结构如下:\n{json.dumps(schema_hint, ensure_ascii=False)}"
     )
@@ -619,6 +699,13 @@ async def scan_bestseller(
         data = json.loads(content)
     except Exception:
         return {"error": "扫榜结果解析失败", "raw": content}
+    # 记录本次联网采集元信息 (供前端/用户知晓是否真联网了)
+    data["web_scan_meta"] = {
+        "fetched_sources_count": fetched_count,
+        "sources": fetched_sources,
+        "scanned_at": _time.time(),
+        "really_online": fetched_count > 0,
+    }
     # 存为项目设定 (lore 类型)
     summary = "## 扫榜调研结果\n" + json.dumps(data, ensure_ascii=False, indent=2)
     store.add_element(pid, "lore", "扫榜调研", summary)
@@ -1022,7 +1109,7 @@ TOOL_SCHEMA: list[dict] = [
         "type": "function",
         "function": {
             "name": "match_author",
-            "description": "技能库:按题材/文风/设定匹配最合适的 1-3 位作家,返回流派/核心原则/节奏公式/技法/句式/常用词。"
+            "description": "技能库:按题材/文风/设定/频道匹配最合适的 1-3 位作家,返回流派/核心原则/节奏公式/技法/句式/常用词。"
             "写正文前先调此工具确定参考作家,再用 get_author_reference 取原文 few-shot。",
             "parameters": {
                 "type": "object",
@@ -1030,6 +1117,7 @@ TOOL_SCHEMA: list[dict] = [
                     "genre": {"type": "string", "description": "题材(如 洪荒/玄幻/悬疑),缺省用项目 genre"},
                     "style": {"type": "string", "description": "文风(如 磅礴苍茫/冷峻克制),缺省用项目 style"},
                     "premise": {"type": "string", "description": "核心设定,缺省用项目 premise"},
+                    "audience": {"type": "string", "description": "频道(男频/女频),缺省用项目 audience"},
                 },
             },
         },
@@ -1750,15 +1838,17 @@ def _skill_list_authors(args: dict) -> dict:
 
 
 def _skill_match_author(pid: str, args: dict) -> dict:
-    """按题材/文风/设定匹配最合适的 1-3 位作家 (含方法论摘要)。"""
+    """按题材/文风/设定/频道匹配最合适的 1-3 位作家 (含方法论摘要)。"""
     from . import skill_library
     p = store.get_project(pid) or {}
     genre = args.get("genre") or p.get("genre", "通用")
     style = args.get("style") or p.get("style", "")
     premise = args.get("premise") or p.get("premise", "")
-    matches = skill_library.match_author(genre, style, premise)
+    audience = args.get("audience") or p.get("audience", "")
+    matches = skill_library.match_author(genre, style, premise, audience)
     return {
         "genre": genre,
+        "audience": audience or "未指定",
         "matched_authors": matches,
         "tip": ("下一步: 用 get_author_reference(author=某作家, scene=battle) "
                 "取该作家在该场景的原文 few-shot,塞进 continue_writing 的 instruction 里, "
@@ -1935,7 +2025,16 @@ _playwright: Any = None
 
 
 async def _get_browser():
-    """获取或创建 Playwright browser 实例 (懒加载单例)。"""
+    """获取或创建 Playwright browser 实例 (懒加载单例)。
+
+    内核装在各平台系统默认位置 (Linux: ~/.cache/ms-playwright/,
+    Windows: %USERPROFILE%\AppData\Local\ms-playwright\),
+    不装进项目目录 —— 因为 Chromium 内核是平台二进制, Linux/Windows/macOS
+    互不通用, 跟着项目走没意义且白占 300MB+。
+    首次使用请跑项目根目录的一键安装脚本 (已固化国内镜像源):
+      Linux/macOS: ./setup_browser.sh
+      Windows:     setup_browser.bat
+    """
     global _browser, _playwright
     if _browser is None:
         try:
@@ -1951,8 +2050,13 @@ async def _get_browser():
                 ],
             )
         except Exception as e:
-            # 如果 Playwright 未安装或浏览器未安装,返回友好错误
-            return None, f"浏览器启动失败: {e}。请确保已安装 Playwright 和 Chromium: pip install playwright && playwright install chromium"
+            # 内核未装 / 缺系统库 → 给出含国内源的一键安装指引
+            return None, (
+                f"浏览器启动失败: {e}。"
+                "Chromium 内核尚未安装或缺少系统依赖, 请在项目根目录运行一键安装脚本 "
+                "(已固化国内镜像源, 下载快): "
+                "Linux/macOS 执行 ./setup_browser.sh, Windows 执行 setup_browser.bat"
+            )
     return _browser, None
 
 

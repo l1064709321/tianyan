@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
@@ -12,14 +13,14 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import store, tools
+from . import __version__, store, tools
 from .agent import run
 from .config import get_settings, reload_settings
 from .exporter import export_project, parse_bytes
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
 
-app = FastAPI(title="小说Agent", version="0.1.0")
+app = FastAPI(title="小说Agent", version=__version__)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,11 +40,12 @@ class ProjectIn(BaseModel):
     genre: str = ""
     premise: str = ""
     style: str = ""
+    audience: str = ""
 
 
 @app.post("/api/projects")
 def create_project(p: ProjectIn):
-    pid = store.create_project(p.name, p.genre, p.premise, p.style)
+    pid = store.create_project(p.name, p.genre, p.premise, p.style, p.audience)
     return {"id": pid, **p.dict()}
 
 
@@ -312,7 +314,9 @@ def export(pid: str, fmt: str = "txt"):
 # ---------- 配置 ----------
 def _model_ready(cfg) -> bool:
     """模型是否已配置可用 key(或本地 ollama)。"""
-    provider = cfg.model.split("/", 1)[0].lower() if "/" in cfg.model else "openai"
+    from .llm import _normalize_model
+    norm = _normalize_model(cfg.model, cfg.api_base)
+    provider = norm.split("/", 1)[0].lower() if "/" in norm else "openai"
     if provider == "ollama":
         return True
     if cfg.api_key:
@@ -570,10 +574,23 @@ if os.path.isdir(WEB_DIR):
 @app.get("/", response_class=HTMLResponse)
 def index():
     idx = os.path.join(WEB_DIR, "index.html")
-    if os.path.exists(idx):
-        with open(idx, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>小说Agent</h1><p>web/ 目录未找到</p>"
+    if not os.path.exists(idx):
+        return "<h1>小说Agent</h1><p>web/ 目录未找到</p>"
+    with open(idx, "r", encoding="utf-8") as f:
+        html = f.read()
+    # 静态资源缓存破坏: 把 /static/<file>?v=<任意> 替换成
+    # ?v=<应用版本号>.<文件mtime>, 这样:
+    #   1. 版本号统一来自 __version__ (单一来源), 前端 HTML 不再手动维护 ?v=N
+    #   2. 文件改动后 mtime 变化, 浏览器自动拉新; 不改文件则缓存稳定
+    def _asset_v(m: "re.Match[str]") -> str:
+        fname = m.group(1)
+        try:
+            mt = int(os.path.getmtime(os.path.join(WEB_DIR, fname)))
+        except OSError:
+            mt = 0
+        return f"/static/{fname}?v={__version__}.{mt}"
+
+    return re.sub(r"/static/([^\"'\s?]+)\?v=[^\"'\s]+", _asset_v, html)
 
 
 # ---------- 卡片启动器 (http://localhost:8000/launcher) ----------

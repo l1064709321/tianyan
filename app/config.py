@@ -27,10 +27,10 @@ class ModelConfig:
       - anthropic/claude-3-5-sonnet
       - gemini/gemini-2.0-flash
       - ollama/qwen2.5:14b
-      - deepseek/deepseek-chat
+      - deepseek/deepseek-v4-flash
       - openai/qwen-max   (兼容 OpenAI 协议的第三方,配合 api_base)
     """
-    model: str = "deepseek/deepseek-chat"
+    model: str = "deepseek/deepseek-v4-flash"
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     temperature: float = 0.8
@@ -428,6 +428,34 @@ PROVIDER_PRESETS = [
         "fireworks_ai/accounts/fireworks/models/qwen3-235b-a22b-instruct",
         "fireworks_ai/accounts/fireworks/models/deepseek-v3",
     ], "env": "FIREWORKS_API_KEY", "api_base": "https://api.fireworks.ai/inference/v1"},
+    # ---------- 小米 MiMo (https://mimo.mi.com) ----------
+    # OpenAI 兼容接口,需用 openai/ 前缀 + 自定义 base
+    # env: XIAOMI_API_KEY (或 MIMO_API_KEY)
+    # 2026-04-23 MiMo-V2.5 系列公测;V2 系列已于 2026-06-30 下线
+    # V2.5-Pro: 1M 上下文/128K 输出,Agent 优化旗舰,默认开启深度思考
+    # V2.5: 全模态(文本/图像/视频/音频),1M 上下文/128K 输出
+    # Token Plan 专用 base: https://token-plan-cn.xiaomimimo.com/v1
+    {"provider": "xiaomi", "label": "小米 MiMo", "models": [
+        # —— V2.5 当前主力(2026-04) ——
+        "openai/mimo-v2.5-pro",
+        "openai/mimo-v2.5",
+    ], "env": "XIAOMI_API_KEY", "api_base": "https://api.xiaomimimo.com/v1"},
+    # ---------- 华为盘古 MaaS (https://www.huaweicloud.com/product/modelarts-maas.html) ----------
+    # OpenAI 兼容 V2 接口,需用 openai/ 前缀 + 自定义 base
+    # env: MAAS_API_KEY
+    # 2026-06-30 openPangu-2.0-Flash 发布;512K 上下文/128K 输出,支持深度思考(可开关)
+    # MaaS 还聚合了 GLM / Kimi / DeepSeek / Qwen3 等三方模型
+    # Token Plan 专用 base: https://api.modelarts-maas.com/plan/v2
+    {"provider": "huawei", "label": "华为盘古 MaaS (ModelArts)", "models": [
+        # —— 盘古原生 ——
+        "openai/openpangu-2.0-flash",
+        # —— MaaS 聚合的三方模型(西南-贵阳一) ——
+        "openai/glm-5.2",
+        "openai/kimi-k2.6",
+        "openai/deepseek-v4-pro",
+        "openai/deepseek-v4-flash",
+        "openai/deepseek-v3.2",
+    ], "env": "MAAS_API_KEY", "api_base": "https://api.modelarts-maas.com/v2"},
 ]
 
 

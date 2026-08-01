@@ -381,8 +381,14 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
   line-height:1.95;resize:none;outline:none}
 
 /* 文件树 */
-.proj-selector{padding:0 10px 8px}
-.proj-select-btn{width:100%;justify-content:flex-start;font-weight:600}
+.proj-selector{padding:0 10px 8px;display:flex;gap:6px;align-items:center}
+.proj-select-btn{flex:1;justify-content:flex-start;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj-new-btn{flex-shrink:0;padding:4px 12px;justify-content:center;align-items:center;gap:3px;
+  font-size:12px;font-weight:600;font-family:var(--sans);line-height:1;
+  border:1.5px solid var(--accent);border-radius:14px;color:var(--accent);background:transparent;
+  white-space:nowrap}
+.proj-new-btn .plus-icon{font-size:14px;font-weight:700;line-height:1}
+.proj-new-btn:hover{background:var(--accent);color:#fff}
 .proj-menu{max-height:240px;overflow-y:auto}
 
 .tree{flex:1;overflow-y:auto;padding:4px 4px 12px;font-size:13px;font-family:var(--sans)}
@@ -704,6 +710,13 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
   font-family:var(--sans);font-size:var(--fs-md)}
 .modal-card input:focus,.modal-card textarea:focus,.modal-card select:focus{outline:none;border-color:var(--accent)}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+
+/* 频道选择器 (男频/女频) */
+.audience-switch{display:flex;gap:0;margin-top:4px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.aud-btn{flex:1;padding:8px 16px;border:none;background:transparent;font-size:var(--fs-md);
+  font-family:var(--sans);cursor:pointer;color:var(--ink2);transition:all .15s}
+.aud-btn.active{background:var(--accent);color:#fff;font-weight:600}
+.aud-btn:not(.active):hover{background:rgba(0,0,0,.05)}
 .scrollbar::-webkit-scrollbar{width:8px}
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-thumb{background:var(--paper4);border-radius:4px}

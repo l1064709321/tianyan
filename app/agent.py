@@ -241,6 +241,7 @@ def _build_messages(pid: str, agent_name: str = agents.DEFAULT_AGENT) -> list[di
             "role": "system",
             "content": (
                 f"当前项目: {proj.get('name','未命名')}\n"
+                f"频道: {proj.get('audience','未指定')}\n"
                 f"类型: {proj.get('genre','')}\n文风: {proj.get('style','')}\n"
                 f"核心设定: {proj.get('premise','')}"
             ),
@@ -390,6 +391,7 @@ async def _run_sub_agent(
             "role": "system",
             "content": (
                 f"当前项目: {proj.get('name','未命名')}\n"
+                f"频道: {proj.get('audience','未指定')}\n"
                 f"类型: {proj.get('genre','')}\n文风: {proj.get('style','')}\n"
                 f"核心设定: {proj.get('premise','')}"
             ),

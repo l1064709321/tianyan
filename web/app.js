@@ -36,7 +36,10 @@ function applyFontScale(s) {
   // CSS 变量 (供 fixed 浮层 settings-panel/modal/cmdk 用,因为它们在 .app 之外,不受 .app zoom 影响)
   root.style.setProperty("--base-font", `${(14 * s).toFixed(2)}px`);
   root.style.setProperty("--chat-msg-font", `${(15.5 * s).toFixed(2)}px`);
-  root.style.setProperty("--chat-line", `${(1.85 * s).toFixed(2)}px`);
+  // line-height 必须是无单位的比例值 (如 1.85), 不能带 px。
+  // 若写成 1.85px 则每行仅 1.85 像素高, 字体 (15.5px) 会全部叠压在一起。
+  // 且 --chat-msg-font 已按 s 缩放, line-height 作为倍数会自动跟随, 无需再乘 s。
+  root.style.setProperty("--chat-line", "1.85");
   root.style.setProperty("--fs-sm", `${(12 * s).toFixed(2)}px`);
   root.style.setProperty("--fs-xs", `${(11 * s).toFixed(2)}px`);
   root.style.setProperty("--fs-md", `${(13 * s).toFixed(2)}px`);
@@ -342,6 +345,12 @@ $("#proj-select-btn").addEventListener("click", (e) => {
   e.stopPropagation();
   $("#proj-select-btn").parentElement.classList.toggle("open");
 });
+// 加号按钮: 直接打开新建项目弹窗
+$("#proj-new-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  $("#proj-select-btn").parentElement.classList.remove("open");
+  $("#proj-modal").classList.add("show");
+});
 document.addEventListener("click", () => {
   $("#proj-select-btn")?.parentElement.classList.remove("open");
 });
@@ -349,7 +358,7 @@ document.addEventListener("click", () => {
 async function selectProject(pid) {
   const p = await api(`/api/projects/${pid}`);
   currentProject = p;
-  $("#proj-info").textContent = p.name + (p.genre ? ` · ${p.genre}` : "");
+  $("#proj-info").textContent = p.name + (p.audience ? ` · ${p.audience}` : "") + (p.genre ? ` · ${p.genre}` : "");
   $("#proj-select-label").textContent = p.name;
   // 拉取已上传素材
   let sources = [];
@@ -392,7 +401,7 @@ function renderTree() {
   // 项目信息节点
   parts.push(`<div class="tree-file" data-act="info">
     <span class="ico">⚙️</span><span class="name">项目设置</span>
-    <span class="meta">${p.genre || ""}</span></div>`);
+    <span class="meta">${p.audience ? p.audience + " · " : ""}${p.genre || ""}</span></div>`);
 
   // 章节文件夹
   parts.push(`<div class="tree-folder open" id="f-chapters">
@@ -1024,6 +1033,16 @@ $("#export-menu").addEventListener("click", (e) => {
 
 // ---------- 新建项目 ----------
 
+// 频道切换
+let selectedAudience = "男频";
+document.querySelectorAll("#p-audience .aud-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#p-audience .aud-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    selectedAudience = btn.dataset.val;
+  });
+});
+
 $("#proj-cancel").addEventListener("click", () => $("#proj-modal").classList.remove("show"));
 $("#proj-ok").addEventListener("click", async () => {
   const body = {
@@ -1031,6 +1050,7 @@ $("#proj-ok").addEventListener("click", async () => {
     genre: $("#p-genre").value.trim(),
     style: $("#p-style").value.trim(),
     premise: $("#p-premise").value.trim(),
+    audience: selectedAudience,
   };
   if (!body.name) return toast("请填名称", "warn");
   const p = await api("/api/projects", { method: "POST", body: JSON.stringify(body) });

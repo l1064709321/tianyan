@@ -48,6 +48,7 @@ def init_db() -> None:
                 genre TEXT,
                 premise TEXT,
                 style TEXT,
+                audience TEXT DEFAULT '',
                 meta TEXT DEFAULT '{}',
                 created_at REAL
             );
@@ -171,6 +172,7 @@ def init_db() -> None:
     # 和 status='generating' 的孤儿章节。重启时统一标记为 interrupted/failed,
     # 让前端能识别"上次没跑完",而不是永远显示"运行中"
     recover_interrupted()
+    _migrate_add_audience()
 
 
 def recover_interrupted() -> dict:
@@ -201,17 +203,25 @@ def recover_interrupted() -> dict:
     return {"recovered_runs": len(runs), "recovered_chapters": len(chs)}
 
 
+def _migrate_add_audience() -> None:
+    """旧库迁移: projects 表加 audience 列。"""
+    with get_conn() as c:
+        cols = [r[1] for r in c.execute("PRAGMA table_info(projects)").fetchall()]
+        if "audience" not in cols:
+            c.execute("ALTER TABLE projects ADD COLUMN audience TEXT DEFAULT ''")
+
+
 def _uuid() -> str:
     return uuid.uuid4().hex
 
 
 # ---------- projects ----------
-def create_project(name: str, genre: str = "", premise: str = "", style: str = "") -> str:
+def create_project(name: str, genre: str = "", premise: str = "", style: str = "", audience: str = "") -> str:
     pid = _uuid()
     with _lock, get_conn() as c:
         c.execute(
-            "INSERT INTO projects(id,name,genre,premise,style,meta,created_at) VALUES(?,?,?,?,?,?,?)",
-            (pid, name, genre, premise, style, "{}", _now()),
+            "INSERT INTO projects(id,name,genre,premise,style,audience,meta,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (pid, name, genre, premise, style, audience, "{}", _now()),
         )
     return pid
 

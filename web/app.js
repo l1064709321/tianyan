@@ -1,4 +1,4 @@
-// 小说Agent 前端:Codex 式聊天 + 步骤展示 + 多格式 + 系统打磨
+// 天衍 前端:Codex 式聊天 + 步骤展示 + 多格式 + 系统打磨
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
@@ -563,10 +563,77 @@ async function loadMessages(pid) {
     showEmpty();
     return;
   }
-  for (const m of msgs) {
-    if (m.role === "tool") continue;
-    if (m.role === "assistant" && m.tool_name === "tool_calls") continue;
-    appendMessage(m.role, m.content, false);
+  // 改进: 历史消息也要渲染思考链 (重进可展开收起)
+  // 后端存了 user / assistant(tool_calls) / tool / assistant(正文) 四种,
+  // 把 assistant(tool_calls) + 紧跟的 tool 结果组装成可折叠的 think-block
+  let i = 0;
+  while (i < msgs.length) {
+    const m = msgs[i];
+    if (m.role === "user") {
+      appendMessage("user", m.content, false);
+      i++;
+      continue;
+    }
+    if (m.role === "assistant" && m.tool_name === "tool_calls") {
+      // 开始一个 assistant 消息, 收集后续 tool 结果 + 最终正文
+      const ast = appendMessage("assistant", "", false);
+      ast.el.innerHTML = "";
+      const chain = document.createElement("div");
+      chain.className = "think-chain";
+      ast.el.appendChild(chain);
+      // 解析 tool_calls
+      let calls = [];
+      try { calls = JSON.parse(m.content || "[]"); } catch (e) {}
+      // thinking 暂未单独存, 用 tool_calls 的顺序作为执行步骤
+      for (let k = 0; k < calls.length; k++) {
+        const c = calls[k];
+        const fn = c.function?.name || "";
+        let args = {};
+        try { args = JSON.parse(c.function?.arguments || "{}"); } catch (e) {}
+        // 找紧跟的 tool 结果 (tool_call_id 匹配)
+        let result = "";
+        let r = i + 1;
+        while (r < msgs.length && msgs[r].role === "tool" && msgs[r].tool_call_id !== c.id) r++;
+        if (r < msgs.length && msgs[r].role === "tool") {
+          result = msgs[r].content || "";
+        }
+        const isErr = result.startsWith('{"error') || result.includes('"error"');
+        const tag = isErr ? "done" : "done";
+        const blk = document.createElement("div");
+        blk.className = `think-block tb-tool tb-${isErr ? "think" : "done"} collapsed`;
+        blk.innerHTML = `<div class="tb-head">
+          <span class="tb-tag exec">执行</span>
+          <span class="tb-title">${esc(cnTool(fn))}</span>
+          <span class="tb-arrow">▼</span>
+        </div>
+        <div class="tb-body">
+          <div class="tb-args">${esc(JSON.stringify(args, null, 2))}</div>
+          <div class="tb-result">${esc((result || "").slice(0, 600))}</div>
+        </div>`;
+        chain.appendChild(blk);
+      }
+      // 跳过已消费的 tool 消息, 找最终 assistant 正文
+      let j = i + 1;
+      while (j < msgs.length && msgs[j].role === "tool") j++;
+      if (j < msgs.length && msgs[j].role === "assistant" && msgs[j].tool_name !== "tool_calls") {
+        const ans = document.createElement("div");
+        ans.className = "md answer-body";
+        ans.innerHTML = renderMd(msgs[j].content || "");
+        ast.el.appendChild(ans);
+        i = j + 1;
+      } else {
+        i = j;
+      }
+      continue;
+    }
+    if (m.role === "tool") {
+      // 孤立的 tool 消息 (无前置 tool_calls, 容错跳过)
+      i++;
+      continue;
+    }
+    // 普通 assistant 正文
+    appendMessage("assistant", m.content, false);
+    i++;
   }
   scrollChat();
 }
@@ -576,7 +643,7 @@ function showEmpty() {
   const div = document.createElement("div");
   div.className = "empty";
   div.id = "empty-state";
-  div.innerHTML = `<div class="empty-icon">✦</div><h2>小说创作 Agent</h2>
+  div.innerHTML = `<div class="empty-icon">✦</div><h2>天衍</h2>
     <p>类似 Codex 的协作式小说写作助手。它会自主规划并调用工具完成创作。</p>`;
   $("#chat").appendChild(div);
   rebuildSuggestions();
@@ -609,7 +676,7 @@ function appendMessage(role, content, streaming) {
   chatHistory.push(msg);
   const div = document.createElement("div");
   div.className = `msg ${role}`;
-  div.innerHTML = `<div class="role ${role}">${role === "user" ? "你" : "✦ 小说Agent"}</div>
+  div.innerHTML = `<div class="role ${role}">${role === "user" ? "你" : "✦ 天衍"}</div>
     <div class="bubble"></div>`;
   $("#chat").appendChild(div);
   msg.el = div.querySelector(".bubble");
@@ -720,6 +787,87 @@ function handleEvent(evt, assistant) {
     case "start":
       window.__naRunStartTs = Date.now();
       break;
+    case "think": {
+      // 兼容旧单事件 (已废弃, 改用 think_start/token/end 流式)
+      break;
+    }
+    case "think_start": {
+      // 开始一个思考块: 默认展开, 准备接收 think_token 逐字填充
+      if (!assistant.chainEl) {
+        assistant.chainEl = document.createElement("div");
+        assistant.chainEl.className = "think-chain";
+        bubble.appendChild(assistant.chainEl);
+      }
+      const round = evt.round || 1;
+      const tBlk = document.createElement("div");
+      tBlk.className = "think-block tb-think tb-streaming";
+      tBlk.innerHTML = `<div class="tb-head">
+        <span class="tb-tag think">思考·轮${round}</span>
+        <span class="tb-status thinking">思考中…</span>
+        <span class="tb-arrow">▼</span>
+      </div>
+      <div class="tb-body">
+        <div class="tb-think-text"></div>
+        <div class="tb-judge" hidden></div>
+      </div>`;
+      assistant.chainEl.appendChild(tBlk);
+      assistant.curThinkBlk = tBlk;
+      assistant.curThinkText = tBlk.querySelector(".tb-think-text");
+      assistant.curThinkStatus = tBlk.querySelector(".tb-status");
+      assistant.curThinkJudge = tBlk.querySelector(".tb-judge");
+      // 左侧面板同步
+      appendThink(`<div class="tp-entry tp-think" data-thinkround="${round}">
+        <span class="tp-dot"></span>
+        <span class="tp-text"><b>思考·轮${round}</b> <span class="thinking-dots"></span></span>
+      </div>`);
+      scrollChat();
+      break;
+    }
+    case "think_token": {
+      // 逐字追加到当前思考块 (打字机效果)
+      if (assistant.curThinkText && evt.text) {
+        assistant.curThinkText.appendChild(document.createTextNode(evt.text));
+        scrollChat();
+      }
+      break;
+    }
+    case "think_end": {
+      // 思考结束: 显示判断结果, 自动折叠
+      if (assistant.curThinkBlk) {
+        const feasible = evt.feasible;
+        const reason = evt.reason || "";
+        const missing = evt.missing || "";
+        const plan = evt.plan || [];
+        // 状态标签
+        assistant.curThinkStatus.textContent = feasible ? "✓ 可行" : "✗ 不可行";
+        assistant.curThinkStatus.className = `tb-status ${feasible ? "ok" : "no"}`;
+        // 判断区
+        const planHtml = plan.length
+          ? `<div class="tb-plan">计划: ${plan.map((p) => `<span class="tb-plan-item">${esc(p)}</span>`).join(" → ")}</div>`
+          : "";
+        const missingHtml = missing ? `<div class="tb-missing">⚠ 缺少: ${esc(missing)}</div>` : "";
+        assistant.curThinkJudge.hidden = false;
+        assistant.curThinkJudge.innerHTML = `<div class="tb-reason">${esc(reason)}</div>${planHtml}${missingHtml}`;
+        // 不可行变红
+        if (!feasible) assistant.curThinkBlk.classList.add("tb-reject");
+        // 自动折叠 (思考完毕)
+        assistant.curThinkBlk.classList.remove("tb-streaming");
+        assistant.curThinkBlk.classList.add("collapsed");
+        // 左侧面板更新
+        const tp = $(`#tp-stream [data-thinkround="${evt.round || 1}"]`);
+        if (tp) {
+          tp.querySelector(".tp-text").innerHTML = `<b>思考·轮${evt.round || 1}</b> ${feasible ? "✓可执行" : "✗需重新思考"}：${esc(reason)}`;
+          tp.querySelector(".tp-dot").style.background = feasible ? "var(--green)" : "var(--red)";
+        }
+        // 清理引用
+        assistant.curThinkBlk = null;
+        assistant.curThinkText = null;
+        assistant.curThinkStatus = null;
+        assistant.curThinkJudge = null;
+      }
+      scrollChat();
+      break;
+    }
     case "delegate": {
       // 委派: 左侧思考面板显示
       const toLbl = AGENT_LABELS[evt.to] || evt.to;
@@ -757,37 +905,62 @@ function handleEvent(evt, assistant) {
         <span class="tp-text"><span class="tp-label tool">调用</span> <b>${esc(toolName)}</b>${agIcon ? " · " + esc(agLbl) : ""}</span>
       </div>`);
 
-      // 工具调用卡片: 右侧紧凑展示 (可折叠)
-      const toolDiv = document.createElement("div");
-      toolDiv.className = "step-card";
+      // 右侧: 用 think-block (无框, 不可复制, 可折叠) 替代旧 step-card
+      // 两段式: 思考块 (如有 thinking) + 执行块
+      // 确保 think-chain 容器存在
+      if (!assistant.chainEl) {
+        assistant.chainEl = document.createElement("div");
+        assistant.chainEl.className = "think-chain";
+        bubble.appendChild(assistant.chainEl);
+      }
+
+      // 思考块: 打草稿/推理 (先于执行展示, 体现"先思考再行动")
+      if (evt.thinking) {
+        const thinkBlk = document.createElement("div");
+        thinkBlk.className = "think-block tb-think collapsed";
+        const agTag = agIcon ? `${agIcon} ${esc(agLbl)} ` : "";
+        thinkBlk.innerHTML = `<div class="tb-head">
+          <span class="tb-tag think">思考</span>
+          <span class="tb-title">${agTag}推理步骤</span>
+          <span class="tb-arrow">▼</span>
+        </div>
+        <div class="tb-body">
+          <div class="tb-think-text">${esc(evt.thinking)}</div>
+        </div>`;
+        assistant.chainEl.appendChild(thinkBlk);
+      }
+
+      // 执行块: 工具调用 (默认展开, 完成后收起)
+      const execBlk = document.createElement("div");
+      execBlk.className = "think-block tb-tool";
       const depthIndent = evt.depth ? `style="margin-left:${evt.depth * 12}px"` : "";
-      const toolName2 = cnTool(evt.tool || "");
-      toolDiv.innerHTML = `<div class="sc-head" ${depthIndent}>
-        <span class="sc-dot"></span>
-        ${agIcon ? `<span class="sc-agent">${agIcon} ${esc(agLbl)}</span>` : ""}
-        <span class="sc-icon">🔧</span>
-        <span class="sc-tool">${esc(toolName2)}</span>
-        <span class="sc-status">执行中…</span>
+      execBlk.innerHTML = `<div class="tb-head" ${depthIndent}>
+        <span class="tb-tag exec">执行</span>
+        ${agIcon ? `<span class="tb-title">${agIcon} ${esc(agLbl)} · ${esc(toolName)}</span>` : `<span class="tb-title">${esc(toolName)}</span>`}
+        <span class="tb-status">执行中…</span>
+        <span class="tb-arrow">▼</span>
       </div>
-      <div class="sc-body">
-        <div class="sc-args"><span class="sc-label">参数</span>${esc(JSON.stringify(evt.args, null, 2))}</div>
-        <div class="sc-result">⏳ 等待结果…</div>
+      <div class="tb-body">
+        <div class="tb-args">${esc(JSON.stringify(evt.args, null, 2))}</div>
+        <div class="tb-result">⏳ 等待结果…</div>
       </div>`;
-      bubble.appendChild(toolDiv);
-      step.resultEl = toolDiv.querySelector(".sc-result");
-      step.headEl = toolDiv.querySelector(".sc-head");
-      step.statusEl = toolDiv.querySelector(".sc-status");
-      step.cardEl = toolDiv;
+      assistant.chainEl.appendChild(execBlk);
+      step.execBlk = execBlk;
+      step.resultEl = execBlk.querySelector(".tb-result");
+      step.statusEl = execBlk.querySelector(".tb-status");
+      step.cardEl = execBlk;
       scrollChat();
       break;
     }
     case "observation": {
       const step = assistant.steps[assistant.steps.length - 1];
-      if (step) {
-        step.resultEl.innerHTML = `<span class="sc-label">结果</span>${prettyResult(evt.result)}`;
-        step.headEl.classList.add("done");
-        if (step.statusEl) step.statusEl.textContent = "✓ 完成";
-        step.cardEl.classList.add("collapsed");
+      if (step && step.execBlk) {
+        step.resultEl.innerHTML = `<span class="tb-result-text">${prettyResult(evt.result)}</span>`;
+        step.statusEl.textContent = "✓ 完成";
+        step.statusEl.style.color = "var(--green)";
+        step.execBlk.classList.remove("tb-tool");
+        step.execBlk.classList.add("tb-done");
+        step.execBlk.classList.add("collapsed"); // 完成后自动收起
 
         // 左侧面板: 标记对应工具条目为完成
         const tpTool = $(`#tp-stream [data-toolstep="${assistant.steps.length - 1}"]`);
@@ -1151,10 +1324,15 @@ async function doExport(fmt) {
 
 document.addEventListener("click", (e) => {
   if (e.target.classList.contains("sugg")) send(e.target.dataset.prompt || e.target.textContent);
-  // 点击 step-card 头部切换折叠
+  // 点击 step-card 头部切换折叠 (兼容旧)
   const scHead = e.target.closest(".sc-head");
   if (scHead) {
     scHead.closest(".step-card")?.classList.toggle("collapsed");
+  }
+  // 点击 think-block 头部切换折叠 (新思考链: 反复展开收起)
+  const tbHead = e.target.closest(".tb-head");
+  if (tbHead) {
+    tbHead.closest(".think-block")?.classList.toggle("collapsed");
   }
 });
 

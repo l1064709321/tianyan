@@ -321,53 +321,63 @@ async def continue_writing(
     # 写后去AI味检测 (P0-4: 集成 deai.py)
     deai_result = run_full_deai_check(new_text)
 
-    # ===== 改进: 自我反思机制 =====
-    # 生成后自评打分, 低于阈值自动重写 (最多 1 次)
+    # ===== 改进: 多轮迭代反思 (ReAct 检查环节强化) =====
+    # 原版: 只重写 1 次就收工 → 真实习生会反复打磨到满意
+    # 改进: 用 reflect_and_rewrite 真正多轮循环 (生成→自评→不达标带问题重写→再评),
+    #       阈值 6 分, 最多重写 2 次, 每轮都带具体问题反馈
     reflection_result = None
     if deai_result["blocking_count"] == 0:  # 只有无 blocking 问题时才反思
         try:
-            from .reflection import self_reflect
-            reflection = await self_reflect(
-                new_text,
-                outline=target.get("outline", ""),
-                genre=(store.get_project(pid) or {}).get("genre", ""),
-                style=(store.get_project(pid) or {}).get("style", ""),
-            )
-            reflection_result = reflection
-            if not reflection["passes"] and reflection["score"] < 5:
-                # 分数太低, 自动重写一次
-                logger.info(f"[反思] 分数={reflection['score']}, 自动重写")
-                store.update_chapter(target["id"], status="generating")
-                rewrite_instruction = (
-                    f"{instruction}\n\n"
-                    f"【重写要求】上次生成的问题:\n"
-                    + "\n".join(f"- {issue}" for issue in reflection["issues"])
-                    + f"\n重点关注: {reflection.get('rewrite_focus', '')}"
-                )
-                rewrite_user = (
+            from .reflection import reflect_and_rewrite, REFLECTION_THRESHOLD
+
+            # 把"流式生成"包装成 reflect_and_rewrite 需要的 generate_fn
+            proj = store.get_project(pid) or {}
+            genre_val = proj.get("genre", "")
+            style_val = proj.get("style", "")
+            outline_val = target.get("outline", "")
+
+            async def _gen_fn(instruction: str) -> dict:
+                """单次生成函数, 返回 {"content": str}。"""
+                cur_user = (
                     f"# 项目设定\n{brief}\n\n# 设定资料\n{elements}\n\n"
                     f"# 检索到的相关上文\n{context}\n\n"
-                    f"# 本章细纲\n标题:{target['title']}\n细纲:\n{target.get('outline','(暂无细纲)')}\n\n"
-                    f"# 续写要求\n{rewrite_instruction}\n"
+                    f"# 本章细纲 (唯一权威蓝图,必须逐项消费,不得自造剧情)\n"
+                    f"标题:{target['title']}\n细纲:\n{outline_val or '(暂无细纲)'}\n\n"
+                    f"# 本章已有正文(结尾部分)\n{existing_tail or '(本章尚未开始)'}\n"
+                    f"# 续写要求\n{instruction}\n"
                     f"续写约 {length} 字正文,直接输出小说内容。"
                 )
-                pieces2: list[str] = []
-                try:
-                    async for tok in stream(
-                        [{"role": "system", "content": system}, {"role": "user", "content": rewrite_user}],
-                        get_settings().default_model,
-                        temperature=0.85,
-                        max_tokens=max(1024, int(length * 2)),
-                    ):
-                        pieces2.append(tok)
-                    rewrite_text = "".join(pieces2)
-                    if rewrite_text.strip():
-                        new_text = rewrite_text
-                        logger.info(f"[反思] 重写成功, 新文本长度={len(new_text)}")
-                except Exception as e:
-                    logger.warning(f"[反思] 重写失败: {e}, 使用原始文本")
+                pieces_iter: list[str] = []
+                async for tok in stream(
+                    [{"role": "system", "content": system}, {"role": "user", "content": cur_user}],
+                    get_settings().default_model,
+                    temperature=0.85,
+                    max_tokens=max(1024, int(length * 2)),
+                ):
+                    pieces_iter.append(tok)
+                return {"content": "".join(pieces_iter)}
+
+            store.update_chapter(target["id"], status="generating")
+            rw_result = await reflect_and_rewrite(
+                _gen_fn,
+                outline=outline_val,
+                genre=genre_val,
+                style=style_val,
+                instruction=instruction or "自然推进情节,保持张力。",
+                threshold=REFLECTION_THRESHOLD,  # 6 分
+                max_attempts=2,  # 最多重写 2 次 (共 3 轮生成)
+            )
+            refined = rw_result.get("content", "")
+            if refined.strip():
+                new_text = refined
+            reflection_result = rw_result.get("reflection")
+            if reflection_result:
+                logger.info(
+                    f"[反思] 多轮迭代完成: 尝试={reflection_result.get('attempts')} "
+                    f"分数={reflection_result.get('score')} 通过={reflection_result.get('passed')}"
+                )
         except Exception as e:
-            logger.debug(f"[反思] 自评失败 (非致命): {e}")
+            logger.warning(f"[反思] 多轮迭代失败 (非致命, 用原始文本): {e}")
 
     # 写后追踪更新 (P0-3: 追踪文件读写闭环)
     tracking_result = await _update_tracking_after_write(
@@ -706,6 +716,17 @@ async def scan_bestseller(
         "scanned_at": _time.time(),
         "really_online": fetched_count > 0,
     }
+    # 改进: 沉淀到市场知识库 (下次同题材可直接复用, 不必重新抓)
+    try:
+        from .market_knowledge import save_scan_result
+        save_scan_result(
+            genre_kw,
+            data,
+            really_online=fetched_count > 0,
+            sources_count=fetched_count,
+        )
+    except Exception:
+        pass
     # 存为项目设定 (lore 类型)
     summary = "## 扫榜调研结果\n" + json.dumps(data, ensure_ascii=False, indent=2)
     store.add_element(pid, "lore", "扫榜调研", summary)

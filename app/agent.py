@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -31,6 +32,103 @@ from typing import AsyncIterator, Optional
 from . import agents, store, tools
 from .config import get_settings
 from .llm import chat
+
+
+# ===== 改进: 主动意图澄清 (ReAct 之前的"信息足不足"判断) =====
+# 原版: 用户输入再模糊也直接进入工具循环硬猜 → 经常跑偏
+# 改进: 进入循环前先做轻量启发式检测, 信息明显不足时主动反问,
+#       而非硬猜。零 LLM 成本 (纯规则)。
+def _check_clarification_needed(pid: str, user_input: str) -> str | None:
+    """检测用户输入是否信息不足, 需要先澄清。
+
+    返回 None = 信息充足, 可继续; 返回非空字符串 = 反问用户的内容。
+    保守策略: 只在明显不足时触发, 避免频繁打断。
+    """
+    text = (user_input or "").strip()
+    if not text:
+        return "你想做什么呢?可以告诉我具体需求,比如「生成大纲」「续写第一章」「扫一下仙侠榜单」。"
+
+    # 1. 过短且非已知操作关键词
+    if len(text) < 5:
+        known_kw = ("大纲", "续写", "扫榜", "润色", "审稿", "拆书", "设定", "查", "停止")
+        if not any(kw in text for kw in known_kw):
+            return f"「{text}」信息有点少,能再具体点吗?比如想生成大纲、续写哪一章、还是调研某个题材的市场?"
+
+    # 2. "继续/接着写"类模糊指令, 但项目里没有任何章节可续
+    if any(kw in text for kw in ("继续写", "接着写", "继续", "往下写")):
+        chapters = store.list_chapters(pid)
+        if not chapters:
+            return "现在还没有章节可以续写。要先从大纲开始吗?告诉我核心设定和题材,我帮你生成大纲和章节结构。"
+
+    # 3. "写一章/写正文" 但无大纲无章节
+    if any(kw in text for kw in ("写一章", "写正文", "开始写", "写第")):
+        chapters = store.list_chapters(pid)
+        if not chapters:
+            proj = store.get_project(pid) or {}
+            if not proj.get("premise"):
+                return "想直接开写,但还没看到核心设定。先告诉我:这本小说讲什么故事?什么题材?主角是谁?我可以先出大纲再动笔。"
+
+    # 4. 扫榜但未指定题材
+    if "扫榜" in text or "榜单" in text or "调研" in text:
+        proj = store.get_project(pid) or {}
+        genre = proj.get("genre", "")
+        if not genre and not any(g in text for g in ("仙侠", "都市", "玄幻", "言情", "悬疑", "科幻", "历史", "末世", "系统")):
+            return "扫榜需要知道题材方向。你想调研哪个品类?比如仙侠、都市、玄幻、言情、悬疑等。"
+
+    return None
+
+
+def _tool_quality_hint(fname: str, result: str) -> str | None:
+    """工具结果质检: 返回异常时给 LLM 的调整提示 (通用 ReAct 检查环节)。
+
+    返回 None = 结果正常; 返回字符串 = 追加为 system 提示引导 LLM 调整。
+    """
+    if not result:
+        return None
+    # 检测错误结果
+    is_error = ('"error"' in result[:80] or result.startswith('{"error'))
+    if not is_error:
+        return None
+    # 提取错误要点 (截短)
+    err_snippet = result[:120]
+    hints = {
+        "continue_writing": "续写工具报错了。常见原因:尚无章节/章节id无效。建议先 query_project 查章节列表,或先委派 story-architect 用 generate_outline 生成大纲。",
+        "generate_outline": "大纲生成失败。建议检查核心设定(premise)是否清晰,或换种表述重试。",
+        "scan_bestseller": "扫榜失败(可能是网络问题)。可以改用市场印象做趋势分析,或稍后重试。",
+        "polish": "润色失败。建议先 query_project 确认章节id和正文存在。",
+        "delegate_to_agent": "委派失败。检查目标 agent 名是否正确(应为 story-architect/narrative-writer 等枚举值)。",
+    }
+    specific = hints.get(fname)
+    if specific:
+        return f"【工具质检】{fname} 返回错误: {err_snippet}。{specific}"
+    return f"【工具质检】{fname} 返回错误: {err_snippet}。请根据错误信息调整策略,或换用其他工具。"
+
+
+def _project_brief_for_think(pid: str) -> str:
+    """思考阶段用的项目简报 (轻量, 不调 LLM)。"""
+    p = store.get_project(pid) or {}
+    parts = []
+    if p.get("name"): parts.append(f"项目: {p['name']}")
+    if p.get("audience"): parts.append(f"频道: {p['audience']}")
+    if p.get("genre"): parts.append(f"类型: {p['genre']}")
+    if p.get("style"): parts.append(f"文风: {p['style']}")
+    if p.get("premise"): parts.append(f"核心设定: {p['premise'][:200]}")
+    return "\n".join(parts) or "(新项目, 暂无设定)"
+
+
+def _assets_summary_for_think(pid: str) -> str:
+    """思考阶段用的资产概况 (章节/设定/素材数量, 让推演知道数据够不够)。"""
+    chapters = store.list_chapters(pid)
+    elements = store.list_elements(pid)
+    chunks = store.list_chunks(pid)
+    lines = []
+    lines.append(f"章节数: {len(chapters)}" + (f" (已写 {sum(1 for c in chapters if c.get('content'))} 章)" if chapters else ""))
+    if chapters:
+        last = chapters[-1]
+        lines.append(f"最近章节: 《{last.get('title','')}》(idx={last.get('idx',0)}, {'有正文' if last.get('content') else '无正文'})")
+    lines.append(f"设定条目: {len(elements)} (角色/世界观/地点/时间线)")
+    lines.append(f"上传素材分块: {len(chunks)}")
+    return "\n".join(lines)
 
 
 # ===== 改进:LLM 调用重试机制 =====
@@ -226,10 +324,12 @@ def _trim_for_window(msgs: list[dict]) -> list[dict]:
     return sys_msgs + note + rest[cut:]
 
 
-def _build_messages(pid: str, agent_name: str = agents.DEFAULT_AGENT) -> list[dict]:
+def _build_messages(
+    pid: str, agent_name: str = agents.DEFAULT_AGENT, *, query: str = ""
+) -> list[dict]:
     """组装对话历史 + 项目背景 + 指定 agent 的系统提示词。
 
-    改进: 注入项目记忆 + 动态计划上下文
+    改进: 注入项目记忆 + 跨会话经验 + 市场知识 + 动态计划上下文
     """
     from .memory import get_memory_context
     from .planner import get_plan_summary
@@ -251,6 +351,26 @@ def _build_messages(pid: str, agent_name: str = agents.DEFAULT_AGENT) -> list[di
     memory_ctx = get_memory_context(pid)
     if memory_ctx:
         msgs.append({"role": "system", "content": memory_ctx})
+
+    # 改进: 注入跨会话经验 (用户偏好/反馈/教训, 跨项目积累, 让 agent "成长")
+    try:
+        from .experience import get_experience_context
+        exp_ctx = get_experience_context(pid=pid, query=query)
+        if exp_ctx:
+            msgs.append({"role": "system", "content": exp_ctx})
+    except Exception:
+        pass
+
+    # 改进: 注入市场知识库 (同题材扫榜沉淀, 避免每次从零调研)
+    try:
+        from .market_knowledge import get_knowledge_context
+        genre_val = (proj or {}).get("genre", "")
+        if genre_val:
+            mk_ctx = get_knowledge_context(genre_val)
+            if mk_ctx:
+                msgs.append({"role": "system", "content": mk_ctx})
+    except Exception:
+        pass
 
     # 改进: 注入当前执行计划
     plan_summary = get_plan_summary(pid)
@@ -493,7 +613,32 @@ async def run(
     logger.info(f"========== 主 agent 启动 pid={pid} agent={agent_name} max_steps={s.max_steps} run_id={run_id} ==========")
     logger.info(f"[{agent_name}] 用户输入: {_trunc(user_input, 200)}")
     store.add_message(pid, "user", user_input)
-    messages = _build_messages(pid, agent_name)
+
+    # ===== 改进: 主动意图澄清 (信息不足先反问, 不硬猜) =====
+    # 在进入工具循环前检测, 命中则直接反问并结束本轮, 等用户补充后再来
+    clarify_q = _check_clarification_needed(pid, user_input)
+    if clarify_q:
+        logger.info(f"[{agent_name}] 触发意图澄清: {clarify_q}")
+        store.add_message(pid, "assistant", clarify_q)
+        store.add_run_event(run_id, "clarify", agent=agent_name, output=clarify_q)
+        store.finish_run(run_id, status="clarified")
+        yield _event({"type": "start", "agent": agent_name, "input": user_input, "run_id": run_id})
+        yield _event({"type": "answer_start", "agent": agent_name})
+        for i in range(0, len(clarify_q), 12):
+            yield _event({"type": "token", "text": clarify_q[i: i + 12]})
+        yield _event({"type": "answer_end"})
+        yield _event({"type": "done", "agent": agent_name, "steps": 0,
+                      "clarified": True, "run_id": run_id})
+        return
+
+    # 改进: 异步提取用户消息中的偏好/反馈到跨会话经验库 (零成本启发式)
+    try:
+        from .experience import maybe_extract_from_user_message
+        asyncio.ensure_future(maybe_extract_from_user_message(pid, user_input))
+    except Exception:
+        pass
+
+    messages = _build_messages(pid, agent_name, query=user_input)
     tool_schema = tools.schema_for(agents.get_tools(agent_name))
     logger.info(f"[{agent_name}] 装载消息 {len(messages)} 条, 工具 {len(agents.get_tools(agent_name))} 个: {agents.get_tools(agent_name)}")
 
@@ -504,6 +649,135 @@ async def run(
         event_queue.append(_event(obj))
 
     yield _event({"type": "start", "agent": agent_name, "input": user_input, "run_id": run_id})
+
+    # ===== 改进: 独立思考阶段 (ReAct 的 Reasoning 前置显式化, 流式显示) =====
+    # 用户需求: 思考过程要逐字实时显示 (像打字机), 思考完自动折叠
+    #   1. 这事能不能做? 现有数据/设定够不够?
+    #   2. 怎么做? 拆成哪些步骤?
+    #   3. 推演可行 → 进工具循环执行; 不可行 → 直接返回让用户补充/重新思考
+    # 流式: 用 stream() 逐字产出, 前端 think_token 实时渲染; 结束发 think_end 折叠
+    MAX_THINK_ROUNDS = 3
+    can_proceed = True
+    think_reject_reason = ""
+    for think_round in range(MAX_THINK_ROUNDS):
+        think_messages = [
+            {
+                "role": "system",
+                "content": (
+                    f"你是天衍「{agent_name}」, 现在收到用户的一个想法/任务。"
+                    "在执行任何工具前, 你必须先在脑海里推演这件事的可行性。\n\n"
+                    "推演要点:\n"
+                    "1. 这件事能不能做? 是否在 Agent 能力范围内?\n"
+                    "2. 现有数据够不够? (项目设定/已有章节/上传素材/联网能力)\n"
+                    "3. 如果能做, 拆成哪些步骤? 每步用什么工具?\n"
+                    "4. 如果不能做或数据不足, 明确指出缺什么, 需要用户补充什么。\n\n"
+                    "输出格式 (必须严格遵守):\n"
+                    "先写推演过程 (打草稿, 算步骤, 评估数据, 100-300字, 像自言自语),\n"
+                    "然后最后一行必须是 JSON 判断, 格式:\n"
+                    '<<<JUDGE>>>{"feasible": true/false, "reason": "一句话理由", "missing": "缺什么(可空)", "plan": ["步骤1","步骤2"]}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"# 用户想法/任务\n{user_input}\n\n"
+                    f"# 当前项目上下文\n{_project_brief_for_think(pid)}\n\n"
+                    f"# 已有章节/设定概况\n{_assets_summary_for_think(pid)}\n\n"
+                    f"请在脑海里推演这件事的可行性, 推演过程要详细, 最后用 <<<JUDGE>>>JSON 给出判断。"
+                    + (f"\n\n# 上一轮推演被判定不可行, 原因: {think_reject_reason}\n请重新思考如何调整。" if think_reject_reason else "")
+                ),
+            },
+        ]
+
+        # 通知前端: 开始一个思考块 (默认展开, 接收 think_token)
+        yield _event({
+            "type": "think_start", "agent": agent_name, "round": think_round + 1,
+        })
+
+        # 流式逐字产出思考过程
+        think_buf = ""
+        try:
+            async for tok in stream(
+                think_messages, s.default_model,
+                temperature=0.5,
+                max_tokens=1500,
+            ):
+                think_buf += tok
+                # 实时把 token 发给前端 (打字机效果)
+                yield _event({"type": "think_token", "agent": agent_name,
+                              "round": think_round + 1, "text": tok})
+        except Exception as e:
+            logger.warning(f"[{agent_name}] 思考阶段流式失败: {e}")
+            think_buf = ""
+
+        # 解析 JSON 判断 (从 <<<JUDGE>>> 后取)
+        think_data = {"feasible": True, "thinking": think_buf, "reason": "fallback"}
+        m = re.search(r"<<<JUDGE>>>\s*(\{.*\})", think_buf, re.S)
+        if m:
+            try:
+                think_data = json.loads(m.group(1))
+                think_data["thinking"] = think_buf[:m.start()].strip()  # 推演过程 = JSON 之前的文本
+            except Exception:
+                pass
+        else:
+            # 没找到 JUDGE 标记, 尝试从全文找 JSON
+            m2 = re.search(r"\{.*\}", think_buf, re.S)
+            if m2:
+                try:
+                    think_data = json.loads(m2.group(0))
+                    think_data["thinking"] = think_buf
+                except Exception:
+                    pass
+
+        thinking_text = think_data.get("thinking", "") or think_buf
+        feasible = think_data.get("feasible", True)
+        reason = think_data.get("reason", "")
+        missing = think_data.get("missing", "")
+        plan = think_data.get("plan", [])
+
+        # 通知前端: 思考结束, 给出判断结果 + 自动折叠
+        yield _event({
+            "type": "think_end", "agent": agent_name, "round": think_round + 1,
+            "feasible": feasible, "reason": reason, "missing": missing, "plan": plan,
+        })
+        store.add_run_event(run_id, "think", agent=agent_name,
+                            thinking=thinking_text, feasible=feasible, reason=reason)
+        logger.info(f"[{agent_name}] 思考轮{think_round+1}: feasible={feasible} reason={_trunc(reason, 80)}")
+
+        if feasible:
+            can_proceed = True
+            messages.append({
+                "role": "system",
+                "content": (
+                    f"【推演结论】已确认任务可行。理由: {reason}。"
+                    f"执行计划: {' → '.join(plan) if plan else '(按需调用工具)'}。"
+                    "请按计划执行, 每步调用合适工具。"
+                ),
+            })
+            break
+        else:
+            can_proceed = False
+            think_reject_reason = f"{reason}" + (f" (缺: {missing})" if missing else "")
+            if think_round == MAX_THINK_ROUNDS - 1:
+                reject_msg = (
+                    f"我在脑海里推演了 {MAX_THINK_ROUNDS} 轮, 觉得这件事目前做不了:\n\n"
+                    f"**不可行原因**: {reason}\n"
+                    + (f"**缺少**: {missing}\n" if missing else "")
+                    + f"\n推演过程:\n{thinking_text}\n\n"
+                    "请补充上述信息, 或调整需求后我再重新推演。"
+                )
+                store.add_message(pid, "assistant", reject_msg)
+                store.add_run_event(run_id, "reject", agent=agent_name, output=reject_msg)
+                store.finish_run(run_id, status="rejected")
+                yield _event({"type": "answer_start", "agent": agent_name})
+                for i in range(0, len(reject_msg), 12):
+                    yield _event({"type": "token", "text": reject_msg[i: i + 12]})
+                yield _event({"type": "answer_end"})
+                yield _event({"type": "done", "agent": agent_name, "steps": 0,
+                              "rejected": True, "run_id": run_id, "reason": reason})
+                return
+
+    # 推演通过, 进入工具循环执行
 
     # 工具调用循环检测: 记录 (tool_name, args_hash) → 连续调用次数
     # 连续相同调用超阈值 = LLM 卡循环了, 强制终止
@@ -706,6 +980,10 @@ async def run(
                     "name": fname, "content": result,
                 })
                 store.add_message(pid, "tool", result, tool_name=fname, tool_call_id=tc.id)
+                # 改进: 工具结果质检 — 异常结果注入调整提示, 引导 LLM 换策略
+                hint = _tool_quality_hint(fname, result)
+                if hint:
+                    messages.append({"role": "system", "content": hint})
                 yield _event({
                     "type": "observation", "agent": agent_name,
                     "tool": fname, "result": result,
@@ -744,6 +1022,10 @@ async def run(
                     "name": fname, "content": result,
                 })
                 store.add_message(pid, "tool", result, tool_name=fname, tool_call_id=tc.id)
+                # 改进: 工具结果质检 — 异常结果注入调整提示, 引导 LLM 换策略
+                hint = _tool_quality_hint(fname, result)
+                if hint:
+                    messages.append({"role": "system", "content": hint})
                 yield _event({
                     "type": "observation", "agent": agent_name,
                     "tool": fname, "result": result,

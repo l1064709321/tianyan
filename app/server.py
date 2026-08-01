@@ -20,7 +20,7 @@ from .exporter import export_project, parse_bytes
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
 
-app = FastAPI(title="小说Agent", version=__version__)
+app = FastAPI(title="天衍", version=__version__)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -575,7 +575,7 @@ if os.path.isdir(WEB_DIR):
 def index():
     idx = os.path.join(WEB_DIR, "index.html")
     if not os.path.exists(idx):
-        return "<h1>小说Agent</h1><p>web/ 目录未找到</p>"
+        return "<h1>天衍</h1><p>web/ 目录未找到</p>"
     with open(idx, "r", encoding="utf-8") as f:
         html = f.read()
     # 静态资源缓存破坏: 把 /static/<file>?v=<任意> 替换成
@@ -599,7 +599,7 @@ LAUNCHER_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>小说Agent · 启动卡片</title>
+<title>天衍 · 启动卡片</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -666,7 +666,7 @@ LAUNCHER_HTML = """<!DOCTYPE html>
 <body>
 <div class="card">
   <div class="logo">✦</div>
-  <div class="title">小说Agent</div>
+  <div class="title">天衍</div>
   <div class="subtitle">小说创作 8 阶段工作流 · 技能市场</div>
   <div class="status checking" id="status">● 检查中...</div>
   <button class="btn btn-primary" id="enterBtn" onclick="enter()" style="display:none">直接进入应用</button>

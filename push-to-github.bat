@@ -3,7 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ==========================================
-echo   小说 Agent - GitHub 一键推送脚本
+echo   天衍 - GitHub 一键推送脚本
 echo   目标仓库: l1064709321/xiaoshuo-agent
 echo ==========================================
 echo.

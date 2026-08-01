@@ -1,9 +1,9 @@
 version: "3.8"
 
 services:
-  novel-agent:
+  tianyan:
     build: .
-    container_name: novel-agent
+    container_name: tianyan
     ports:
       - "8000:8000"
     volumes:

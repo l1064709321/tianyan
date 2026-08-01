@@ -208,27 +208,70 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 /* 思考面板激活时隐藏树 */
 .tree.hidden{display:none}
 
-/* ============ 工具调用卡片 (step-card) — 紧凑、可折叠 ============ */
-.step-card{margin:6px 0;border:1px solid var(--border);border-radius:var(--radius-sm);
-  overflow:hidden;background:var(--paper2);transition:.15s;box-shadow:var(--shadow-sm)}
-.step-card:hover{border-color:var(--border2)}
-.step-card .sc-head{display:flex;align-items:center;gap:6px;padding:6px 10px;
-  background:var(--paper3);font-size:11.5px;font-family:var(--sans);cursor:pointer;user-select:none}
+/* ============ 思考链 + 工具调用 (无框, 不可复制, 可折叠) ============ */
+/* 用户要求: 不要框框框起来, 只要不可复制; 展开收起要能反复点 */
+.think-chain{margin:6px 0 4px;user-select:none;-webkit-user-select:none}
+.think-block{margin:2px 0;padding:3px 0 3px 14px;border-left:2px solid transparent;
+  cursor:pointer;transition:.12s;line-height:1.5}
+.think-block:hover{border-left-color:var(--border2)}
+.think-block.tb-think{border-left-color:var(--blue);opacity:.85}
+.think-block.tb-tool{border-left-color:var(--yellow)}
+.think-block.tb-done{border-left-color:var(--green)}
+.tb-head{display:flex;align-items:center;gap:6px;font-size:11.5px;font-family:var(--sans);color:var(--ink2)}
+.tb-tag{font-size:10px;font-weight:700;padding:0 5px;border-radius:6px;letter-spacing:.3px}
+.tb-tag.think{background:rgba(61,107,139,.12);color:var(--blue)}
+.tb-tag.exec{background:rgba(154,107,31,.12);color:var(--yellow)}
+.tb-tag.done{background:rgba(90,107,63,.12);color:var(--green)}
+.tb-tag.delg{background:rgba(161,61,61,.1);color:var(--accent)}
+.tb-title{color:var(--ink2);font-weight:500}
+.tb-arrow{margin-left:auto;font-size:9px;color:var(--muted);transition:transform .15s}
+.think-block.collapsed .tb-arrow{transform:rotate(-90deg)}
+.tb-body{overflow:hidden;transition:max-height .2s ease;max-height:600px;
+  font-size:11px;font-family:var(--mono);color:var(--muted);white-space:pre-wrap;
+  padding:4px 0 4px 2px;user-select:none;-webkit-user-select:none}
+.think-block.collapsed .tb-body{max-height:0}
+.tb-body .tb-think-text{color:var(--ink2);font-family:var(--sans);font-size:11.5px}
+.tb-body .tb-args{color:var(--accent2);margin-top:3px}
+.tb-body .tb-result{color:var(--ink2);margin-top:3px;max-height:180px;overflow-y:auto}
+.tb-status{font-size:10.5px;color:var(--muted);margin-left:auto;margin-right:6px}
+.tb-result-text{display:block}
+.tb-feasible{font-size:10px;font-weight:700;padding:0 5px;border-radius:6px;margin-left:4px}
+.tb-feasible.ok{background:rgba(90,107,63,.14);color:var(--green)}
+.tb-feasible.no{background:rgba(161,61,61,.12);color:var(--red)}
+.think-block.tb-reject{border-left-color:var(--red);opacity:.9}
+.tb-plan{margin-top:5px;font-size:10.5px;color:var(--blue);font-family:var(--sans)}
+.tb-plan-item{background:rgba(61,107,139,.08);padding:0 4px;border-radius:4px;margin:0 2px}
+.tb-missing{margin-top:4px;font-size:10.5px;color:var(--red);font-family:var(--sans)}
+.tb-status.thinking{color:var(--blue)}
+.tb-status.ok{color:var(--green)}
+.tb-status.no{color:var(--red)}
+.tb-judge{margin-top:8px;padding-top:6px;border-top:1px dashed var(--border)}
+.tb-reason{font-size:11px;color:var(--ink2);font-family:var(--sans);margin-bottom:4px}
+.think-block.tb-streaming .tb-think-text::after{
+  content:"▋";color:var(--blue);animation:blink 1s steps(2) infinite;margin-left:1px}
+@keyframes blink{50%{opacity:0}}
+.think-block.tb-streaming{border-left-color:var(--blue)}
+
+/* 兼容旧 step-card (渐进迁移, 保留折叠但去框) */
+.step-card{margin:4px 0;border:none;background:transparent;box-shadow:none;user-select:none;-webkit-user-select:none}
+.step-card .sc-head{display:flex;align-items:center;gap:6px;padding:4px 8px;
+  font-size:11.5px;font-family:var(--sans);cursor:pointer;user-select:none;
+  border-left:2px solid var(--yellow);background:transparent}
+.step-card .sc-head.done{border-left-color:var(--green)}
 .step-card .sc-dot{width:6px;height:6px;border-radius:50%;background:var(--yellow);flex-shrink:0;
   animation:pulse 1.2s infinite}
 .step-card .sc-head.done .sc-dot{background:var(--green);animation:none}
-.step-card .sc-agent{font-size:10.5px;font-weight:600;color:var(--accent);
-  background:rgba(161,61,61,.08);padding:0 6px;border-radius:8px;font-family:var(--sans)}
+.step-card .sc-agent{font-size:10.5px;font-weight:600;color:var(--accent);font-family:var(--sans)}
 .step-card .sc-icon{font-size:12px}
 .step-card .sc-tool{font-family:var(--mono);color:var(--accent);font-weight:600;font-size:11px}
 .step-card .sc-status{font-size:10.5px;color:var(--muted);margin-left:auto}
 .step-card .sc-head.done .sc-status{color:var(--green)}
-.step-card .sc-body{overflow:hidden;transition:max-height .25s ease;max-height:400px}
+.step-card .sc-body{overflow:hidden;transition:max-height .25s ease;max-height:400px;
+  user-select:none;-webkit-user-select:none}
 .step-card.collapsed .sc-body{max-height:0}
-.step-card .sc-args,.step-card .sc-result{padding:6px 10px;font-family:var(--mono);
-  font-size:11px;white-space:pre-wrap;background:var(--paper)}
-.step-card .sc-args{color:var(--accent2);border-bottom:1px solid var(--border);
-  max-height:120px;overflow-y:auto}
+.step-card .sc-args,.step-card .sc-result{padding:4px 10px 4px 18px;font-family:var(--mono);
+  font-size:11px;white-space:pre-wrap;background:transparent}
+.step-card .sc-args{color:var(--accent2);max-height:120px;overflow-y:auto}
 .step-card .sc-result{color:var(--ink2);max-height:200px;overflow-y:auto}
 .step-card .sc-label{display:block;font-size:9.5px;font-weight:600;color:var(--muted);
   letter-spacing:.3px;text-transform:uppercase;margin-bottom:3px;font-family:var(--sans)}

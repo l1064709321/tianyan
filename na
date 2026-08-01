@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 小说Agent 一键管理命令
+# 天衍 一键管理命令
 # 用法:
 #   na          启动服务 (默认)
 #   na start    启动

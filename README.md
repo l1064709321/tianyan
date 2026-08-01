@@ -1,6 +1,6 @@
 # 天衍
 
-一个多Agent协同的**小说创作 Agent**(Web 界面)。7 个 agent 协同,按 8 阶段工作流完成从扫榜调研到定稿入库的完整长篇创作闭环,内置「毒舌总编」审稿机制与质检打回循环。
+一个多Agent协同的**天衍**(Web 界面)。7 个 agent 协同,按 8 阶段工作流完成从扫榜调研到定稿入库的完整长篇创作闭环,内置「毒舌总编」审稿机制与质检打回循环。
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue) 
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green) 
@@ -16,14 +16,14 @@
 
 | 阶段 | 名称 | 负责 agent | 说明 |
 |------|------|-----------|------|
-| 1 | 扫榜调研 | story-architect | 扫描 2026 网文市场热门榜单,分析题材趋势/流量赛道/读者画像 |reload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alert
+| 1 | 扫榜调研 | story-architect | 扫描 2026 网文市场热门榜单,分析题材趋势/流量赛道/读者画像 |
 | 2 | 拆书解构 | story-architect | 拆解对标畅销书,提取钩子/节奏/人设/文风/核心梗等可复用模块 |
-| 3 | 定文风定位 | story-architect + character-designer | 基于扫榜+拆书结论,确定文风/题材/核心梗/情绪曲线 |reload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alert
+| 3 | 定文风定位 | story-architect + character-designer | 基于扫榜+拆书结论,确定文风/题材/核心梗/情绪曲线 |
 | 4 | 大纲搭建 | story-architect | 全书体量→卷纲→细纲→伏笔/时间线/角色状态追踪初始化 |
-| 5 | 正文写作 | story-explorer + narrative-writer + character-designer | 细纲优先→加载上下文→三维度揉进→字数验证→更新追踪 |reload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alert
+| 5 | 正文写作 | story-explorer + narrative-writer + character-designer | 细纲优先→加载上下文→三维度揉进→字数验证→更新追踪 |
 | 6 | 毒舌编辑 | orchestrator | 总编逐章审稿,输出【毒舌评分 1-10】+【致命问题】+【裁决】 |
-| 7 | 审核质检 | consistency-checker + narrative-writer | 一致性+伏笔+去 AI 味+格式合规,**不通过打回阶段 5 重写** |reload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alert
-| 8 | 定稿入库 | orchestrator | 审核通过→标记定稿→更新追踪→**循环回阶段 5 写下一章** |reload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alert
+| 7 | 审核质检 | consistency-checker + narrative-writer | 一致性+伏笔+去 AI 味+格式合规,**不通过打回阶段 5 重写** |
+| 8 | 定稿入库 | orchestrator | 审核通过→标记定稿→更新追踪→**循环回阶段 5 写下一章** |
 
 ### 7-agent 架构
 
@@ -31,7 +31,7 @@
 |-------|------|---------|
 | orchestrator | 总编(全局调度 + 毒舌审稿) | read-write |
 | story-architect | 架构师(扫榜/拆书/大纲) | read-write |
-| narrative-writer | 主笔(正文 + 去 AI 味) | read-write |reload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alertreload-alert
+| narrative-writer | 主笔(正文 + 去 AI 味) | read-write |
 | character-designer | 角色师(人设 + 对话) | read-write |
 | consistency-checker | 质检员(一致性审查) | **read-only** |
 | story-explorer | 资料员(上下文加载) | **read-only** |
@@ -43,7 +43,7 @@
 ### UI 特性
 
 - **⌘K / Ctrl+K 命令面板**:12 个快捷命令,模糊搜索 + 方向键导航
-- **斜杠命令**:9 个(`/续写 /状态 /质检 /大纲 /设定 /润色 /清空 /设置 /导出`)reload-alert
+- **斜杠命令**:9 个(`/续写 /状态 /质检 /大纲 /设定 /润色 /清空 /设置 /导出`)
 - **Agent Panel**:右侧滑出,展示当前活跃 agent 的角色/阶段/沙盒/工具列表
 - **IDE 式文件树**:左侧章节/设定/素材库树形展示,支持展开收起
 - **多格式导出**:TXT / Markdown / Word(.docx) / HTML(可打印 PDF)
@@ -79,7 +79,7 @@
 ```powershell
 # 1. 克隆
 git clone https://github.com/l1064709321/tianyan.git
-cd saga
+cd tianyan
 
 # 2. 装依赖 (uvloop/httptools 会自动跳过)
 pip install -r requirements.txt
@@ -95,7 +95,7 @@ na.bat start                       # 后台运行
 ```bash
 # 1. 克隆
 git clone https://github.com/l1064709321/tianyan.git
-cd saga
+cd tianyan
 
 # 2. 装依赖 (自动安装 uvloop/httptools 高性能组件)
 pip install -r requirements.txt
@@ -144,7 +144,7 @@ vim ~/.xiaosuo-agent/config.yaml
 ## 📁 项目结构
 
 ```
-saga/
+tianyan/
 ├── app/
 │   ├── agents.py       # 7-agent 定义 + 8 阶段工作流 + 毒舌审稿人设
 │   ├── tools.py        # 11 个工具(扫榜/拆书/大纲/续写/润色/...)

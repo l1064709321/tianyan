@@ -77,7 +77,7 @@ def _load_yaml(path: str) -> dict:
 
 def _model_from_dict(d: dict) -> ModelConfig:
     return ModelConfig(
-        model=d.get("model", "openai/gpt-4o-mini"),
+        model=d.get("model", "deepseek/deepseek-v4-flash"),
         api_key=d.get("api_key"),
         api_base=d.get("api_base"),
         temperature=float(d.get("temperature", 0.8)),

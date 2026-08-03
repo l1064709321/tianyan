@@ -1023,94 +1023,53 @@ function handleEvent(evt, assistant) {
         <span class="td-icon">${agIcon}</span>
         <span class="td-text"><span class="td-tag sub">发言</span> <b>${esc(agLbl)}</b>${task ? "：" + esc(task.slice(0, 50)) : ""}</span>
       </div>`);
-      // 主对话区: 建专家独立气泡
+      // 主对话区: 建专家独立气泡 (思考在气泡外面)
       const subDiv = document.createElement("div");
       subDiv.className = `msg sub-agent agent-${ag}`;
       subDiv.dataset.agent = ag;
-      subDiv.innerHTML = `<div class="role sub-role">${agIcon} ${esc(agLbl)}</div>
+      subDiv.innerHTML = `<div class="sub-header">
+          <div class="sub-role">${agIcon} ${esc(agLbl)}</div>
+          <div class="sub-think-toggle" onclick="this.classList.toggle('expanded');this.closest('.msg').querySelector('.sub-think-panel').classList.toggle('open')">
+            思考过程 <span class="arrow">▼</span>
+          </div>
+        </div>
+        <div class="sub-think-panel"><div class="sub-think-body"></div></div>
         <div class="bubble sub-bubble">
           ${task ? `<div class="sub-task"><div class="sub-task-label">📦 接到任务</div>${esc(task.slice(0, 300))}${task.length > 300 ? "…" : ""}</div>` : ""}
-          <div class="sub-think-wrap" hidden></div>
-          <div class="sub-tool-cards"></div>
           <div class="sub-answer-wrap"></div>
         </div>`;
       $("#chat").appendChild(subDiv);
-      // 缓存到 assistant 上, 供后续 sub_think/sub_answer/sub_tool 填充
+      // 缓存到 assistant 上, 供后续 sub_think/sub_answer 填充
       if (!assistant.subBubbles) assistant.subBubbles = {};
       assistant.subBubbles[ag] = {
         el: subDiv,
-        thinkWrap: subDiv.querySelector(".sub-think-wrap"),
-        toolCardsWrap: subDiv.querySelector(".sub-tool-cards"),
+        thinkBody: subDiv.querySelector(".sub-think-body"),
         answerWrap: subDiv.querySelector(".sub-answer-wrap"),
-        toolCards: {},  // tool call id → card DOM element
       };
       scrollChat();
       break;
     }
     case "sub_think": {
-      // 群聊式: 专家 agent 的思考过程流式追加到其气泡思考区
+      // 群聊式: 专家 agent 的思考过程追加到气泡外面的思考面板
       const ag = evt.agent || "";
       const text = evt.text || "";
       if (!text) break;
       const entry = assistant.subBubbles && assistant.subBubbles[ag];
-      if (!entry) break;
-      let wrap = entry.thinkWrap;
-      if (wrap.hidden) {
-        wrap.hidden = false;
-        wrap.innerHTML = `<div class="sub-think-label collapsible">💭 思考过程 <span style="font-size:10px;opacity:.6">▼</span></div><div class="sub-think-body"></div>`;
-        // 点击折叠/展开
-        const lbl = wrap.querySelector(".sub-think-label");
-        lbl.onclick = () => {
-          const body = wrap.querySelector(".sub-think-body");
-          const arrow = lbl.querySelector("span");
-          if (body.hidden) {
-            body.hidden = false;
-            if (arrow) arrow.textContent = "▼";
-          } else {
-            body.hidden = true;
-            if (arrow) arrow.textContent = "▶";
-          }
-        };
-      }
-      let body = wrap.querySelector(".sub-think-body");
-      if (!body) {
-        body = document.createElement("div");
-        body.className = "sub-think-body";
-        wrap.appendChild(body);
-      }
-      body.textContent += text + "\n";
+      if (!entry || !entry.thinkBody) break;
+      const div = document.createElement("div");
+      div.className = "st-entry st-think";
+      div.innerHTML = `<span class="st-dot"></span><span class="st-text">${esc(text)}</span>`;
+      entry.thinkBody.appendChild(div);
       scrollChat();
       break;
     }
     case "sub_answer": {
-      // 群聊式: 专家 agent 的最终回答作为气泡正文
+      // 群聊式: 专家 agent 的最终回答作为气泡正文 (思考面板保持折叠)
       const ag = evt.agent || "";
       const text = evt.text || "";
       if (!text) break;
       const entry = assistant.subBubbles && assistant.subBubbles[ag];
       if (!entry) break;
-      // 折叠思考区 (已思考完, 进入回答)
-      if (!entry.thinkWrap.hidden) {
-        const lbl = entry.thinkWrap.querySelector(".sub-think-label");
-        if (lbl) {
-          lbl.innerHTML = "💭 思考过程 <span style=\"font-size:10px;opacity:.6\">▶</span>";
-          lbl.classList.add("collapsible");
-          // 默认折叠思考区
-          const body = entry.thinkWrap.querySelector(".sub-think-body");
-          if (body) body.hidden = true;
-          lbl.onclick = () => {
-            const body = entry.thinkWrap.querySelector(".sub-think-body");
-            const arrow = lbl.querySelector("span");
-            if (body.hidden) {
-              body.hidden = false;
-              if (arrow) arrow.textContent = "▼";
-            } else {
-              body.hidden = true;
-              if (arrow) arrow.textContent = "▶";
-            }
-          };
-        }
-      }
       entry.answerWrap.innerHTML = `<div class="sub-answer-body md">${renderMd(text)}</div>`;
       scrollChat();
       break;
@@ -1222,7 +1181,7 @@ function handleEvent(evt, assistant) {
         break;
       }
 
-      // ===== 子 agent 工具调用: 路由到子 agent 气泡 =====
+      // ===== 子 agent 工具调用: 追加到子 agent 的思考面板 =====
       let subEntry = assistant.subBubbles && assistant.subBubbles[ag];
       // fallback: 如果 sub_agent_start 还没到,自动创建子 agent 气泡
       if (ag && ag !== "orchestrator" && !subEntry) {
@@ -1231,50 +1190,32 @@ function handleEvent(evt, assistant) {
         const subDiv = document.createElement("div");
         subDiv.className = `msg sub-agent agent-${ag}`;
         subDiv.dataset.agent = ag;
-        subDiv.innerHTML = `<div class="role sub-role">${agIcon2} ${esc(agLbl2)}</div>
-          <div class="bubble sub-bubble">
-            <div class="sub-think-wrap" hidden></div>
-            <div class="sub-tool-cards"></div>
-            <div class="sub-answer-wrap"></div>
-          </div>`;
+        subDiv.innerHTML = `<div class="sub-header">
+            <div class="sub-role">${agIcon2} ${esc(agLbl2)}</div>
+            <div class="sub-think-toggle" onclick="this.classList.toggle('expanded');this.closest('.msg').querySelector('.sub-think-panel').classList.toggle('open')">
+              思考过程 <span class="arrow">▼</span>
+            </div>
+          </div>
+          <div class="sub-think-panel"><div class="sub-think-body"></div></div>
+          <div class="bubble sub-bubble"><div class="sub-answer-wrap"></div></div>`;
         $("#chat").appendChild(subDiv);
         if (!assistant.subBubbles) assistant.subBubbles = {};
         assistant.subBubbles[ag] = {
           el: subDiv,
-          thinkWrap: subDiv.querySelector(".sub-think-wrap"),
-          toolCardsWrap: subDiv.querySelector(".sub-tool-cards"),
+          thinkBody: subDiv.querySelector(".sub-think-body"),
           answerWrap: subDiv.querySelector(".sub-answer-wrap"),
-          toolCards: {},
         };
         subEntry = assistant.subBubbles[ag];
         scrollChat();
       }
-      if (ag && ag !== "orchestrator" && subEntry && subEntry.toolCardsWrap) {
-        // 在子 agent 气泡内创建工具调用卡片
-        const card = document.createElement("div");
-        card.className = "sub-tool-card";
-        card.innerHTML = `<div class="stc-head">
-          <span class="stc-icon">🔧</span>
-          <span class="stc-name">${esc(toolName)}</span>
-          <span class="stc-status">执行中…</span>
-        </div>
-        <div class="stc-body">
-          <div class="stc-args">${esc(JSON.stringify(evt.args, null, 2))}</div>
-          <div class="stc-result">⏳ 等待结果…</div>
-        </div>`;
-        // 点击折叠/展开
-        card.querySelector(".stc-head").onclick = () => card.classList.toggle("collapsed");
-        subEntry.toolCardsWrap.appendChild(card);
-        // 存引用, 供 observation 事件更新
-        const tcId = `${ag}_step_${Object.keys(subEntry.toolCards).length}`;
-        subEntry.toolCards[tcId] = {
-          card,
-          resultEl: card.querySelector(".stc-result"),
-          statusEl: card.querySelector(".stc-status"),
-          tool: evt.tool,
-        };
-        // 标记当前活跃 tool card id (供 observation 匹配)
-        subEntry._activeToolId = tcId;
+      if (ag && ag !== "orchestrator" && subEntry && subEntry.thinkBody) {
+        // 在子 agent 思考面板里添加工具调用条目
+        const div = document.createElement("div");
+        div.className = "st-entry st-tool";
+        div.innerHTML = `<span class="st-dot"></span><span class="st-text">🔧 <b>${esc(toolName)}</b></span>`;
+        subEntry.thinkBody.appendChild(div);
+        // 存引用, 供 observation 事件更新为完成状态
+        subEntry._lastToolEntry = div;
         scrollChat();
         break;
       }
@@ -1323,15 +1264,12 @@ function handleEvent(evt, assistant) {
     case "observation": {
       const ag = evt.agent || "";
 
-      // ===== 子 agent 工具结果: 路由到子 agent 工具卡片 =====
+      // ===== 子 agent 工具结果: 更新思考面板里的工具条目为完成 =====
       let subEntry = ag && ag !== "orchestrator" && assistant.subBubbles && assistant.subBubbles[ag];
-      if (subEntry && subEntry._activeToolId && subEntry.toolCards[subEntry._activeToolId]) {
-        const tc = subEntry.toolCards[subEntry._activeToolId];
-        tc.resultEl.innerHTML = prettyResult(evt.result, tc.tool);
-        tc.statusEl.textContent = "✓ 完成";
-        tc.statusEl.className = "stc-status done";
-        tc.card.classList.add("sub-tool-done");
-        tc.card.classList.add("collapsed"); // 完成后自动收起
+      if (subEntry && subEntry._lastToolEntry) {
+        subEntry._lastToolEntry.className = "st-entry st-done";
+        const textEl = subEntry._lastToolEntry.querySelector(".st-text");
+        if (textEl) textEl.innerHTML = textEl.innerHTML.replace("</b>", " ✓</b>");
         scrollChat();
         break;
       }

@@ -284,6 +284,33 @@ function toast(msg, type = "ok", ms = 3000) {
   }, ms);
 }
 
+// ---------- 导出TXT ----------
+function downloadTxt(text, label) {
+  // 清理 markdown 格式, 保留纯文本
+  let clean = text
+    .replace(/```[\s\S]*?```/g, (m) => m.slice(3, -3).trim())  // 代码块
+    .replace(/\*\*([^*]+)\*\*/g, "$1")  // 粗体
+    .replace(/\*([^*]+)\*/g, "$1")  // 斜体
+    .replace(/`([^`]+)`/g, "$1")  // 行内代码
+    .replace(/^#{1,6} /gm, "")  // 标题
+    .replace(/^> /gm, "")  // 引用
+    .replace(/^[-*] /gm, "• ")  // 列表
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")  // 链接
+    .trim();
+  const blob = new Blob([clean], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const now = new Date();
+  const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}`;
+  a.download = label ? `${label}_${ts}.txt` : `天衍_${ts}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast("已导出 TXT", "ok");
+}
+
 // ---------- 配置/模型 ----------
 async function loadConfig() {
   config = await api("/api/config");
@@ -1070,7 +1097,13 @@ function handleEvent(evt, assistant) {
       if (!text) break;
       const entry = assistant.subBubbles && assistant.subBubbles[ag];
       if (!entry) break;
-      entry.answerWrap.innerHTML = `<div class="sub-answer-body md">${renderMd(text)}</div>`;
+      const agLbl = AGENT_LABELS[ag] || ag;
+      let html = `<div class="sub-answer-body md">${renderMd(text)}</div>`;
+      // 如果是主笔写的正文 (字数>200), 加导出TXT按钮
+      if (text.length > 200) {
+        html += `<div style="margin-top:6px"><button class="btn ghost sm" style="padding:2px 8px;font-size:11px;cursor:pointer" onclick="downloadTxt(this.closest('.msg').querySelector('.sub-answer-body').textContent, '${esc(agLbl)}')">📄 导出TXT</button></div>`;
+      }
+      entry.answerWrap.innerHTML = html;
       scrollChat();
       break;
     }
@@ -1375,6 +1408,9 @@ function handleEvent(evt, assistant) {
       // 1.5 秒后恢复文件树
       setTimeout(() => hideThinkPanel(), 1500);
 
+      // 收集总编最终输出内容 (用于导出)
+      const finalText = assistant.rawBuf || assistant.answerEl?.textContent || "";
+
       if (!assistant.answerEl) {
         const note = document.createElement("div");
         note.className = "done-note";
@@ -1383,8 +1419,17 @@ function handleEvent(evt, assistant) {
       } else {
         const note = document.createElement("div");
         note.className = "done-note muted";
-        note.textContent = `✓ 完成 · ${evt.steps} 步` +
-          (evt.stats ? ` · ${evt.stats.chapters}章/${evt.stats.total_chars}字` : "");
+        note.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+        note.innerHTML = `<span>✓ 完成 · ${evt.steps} 步${evt.stats ? ` · ${evt.stats.chapters}章/${evt.stats.total_chars}字` : ""}</span>`;
+        // 导出TXT按钮
+        if (finalText.length > 0) {
+          const dlBtn = document.createElement("button");
+          dlBtn.className = "btn ghost sm";
+          dlBtn.style.cssText = "padding:2px 8px;font-size:11px;cursor:pointer";
+          dlBtn.textContent = "📄 导出TXT";
+          dlBtn.onclick = () => downloadTxt(finalText);
+          note.appendChild(dlBtn);
+        }
         bubble.appendChild(note);
       }
       updateActiveAgent("orchestrator");

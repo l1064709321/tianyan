@@ -6,4 +6,4 @@
 
 版本号与 git 发布 tag 保持一致 (见 `git tag` / `git describe --tags`)。
 """
-__version__ = "0.0.0.0.0.0.2"
+__version__ = "0.0.0.0.0.0.3"

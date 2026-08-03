@@ -11,6 +11,59 @@ let activeAgent = "orchestrator";           // 当前活跃 agent(由 delegate �
 let workflowPhases = [];
 let readonlyAgents = [];
 
+// ============ 后端心跳检测 ============
+const HEARTBEAT_INTERVAL = 15000; // 15秒检测一次
+const HEARTBEAT_TIMEOUT = 5000;   // 5秒超时
+let heartbeatTimer = null;
+let heartbeatFailCount = 0;
+let heartbeatStatus = "unknown"; // unknown | online | offline | reconnecting
+
+function startHeartbeat() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(checkBackend, HEARTBEAT_INTERVAL);
+  checkBackend(); // 立即检测一次
+}
+
+async function checkBackend() {
+  const dot = $("#conn-dot");
+  const text = $("#conn-text");
+  const status = $("#conn-status");
+  if (!dot || !text || !status) return;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), HEARTBEAT_TIMEOUT);
+    const res = await fetch("/api/config", { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      if (heartbeatStatus === "offline" || heartbeatStatus === "reconnecting") {
+        toast("后端已恢复连接", "ok");
+      }
+      heartbeatStatus = "online";
+      heartbeatFailCount = 0;
+      status.className = "conn-status online";
+      dot.title = "后端在线";
+      text.textContent = "";
+    } else {
+      throw new Error("HTTP " + res.status);
+    }
+  } catch (e) {
+    heartbeatFailCount++;
+    if (heartbeatFailCount >= 2) {
+      heartbeatStatus = "offline";
+      status.className = "conn-status offline";
+      text.textContent = "连接断开";
+      dot.title = "后端离线";
+    } else if (heartbeatFailCount === 1) {
+      heartbeatStatus = "reconnecting";
+      status.className = "conn-status reconnecting";
+      text.textContent = "重连中…";
+      dot.title = "正在重连";
+    }
+  }
+}
+
 // ---- 主题 (浅色/深色/护眼/暗夜紫/羊皮纸) ----
 const THEMES = {
   light:   { label: "浅色白",  vars: { "--paper":"#ffffff", "--paper2":"#f7f7f8", "--paper3":"#eef0f2", "--paper4":"#e4e7ea", "--ink":"#1a1a1a", "--ink2":"#4a4a4a", "--muted":"#8a8a8a", "--border":"#e2e2e2", "--border2":"#d0d0d0", "--accent":"#c43d3d", "--blue":"#3d6b8b", "--green":"#2d7a4a", "--yellow":"#9a6b1f", "--red":"#c43d3d" } },
@@ -240,6 +293,8 @@ async function loadConfig() {
     toast(`模型 ${config.default} 未配置 API Key,请设置环境变量或编辑 config.yaml`, "warn", 6000);
   }
   refreshStatus();
+  // 启动心跳检测
+  startHeartbeat();
 }
 
 // 顶栏模型按钮已删除 — 模型快速切换走 Composer 内的 model-chip

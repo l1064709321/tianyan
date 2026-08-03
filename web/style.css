@@ -1138,3 +1138,16 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .td-done-badge{display:flex;align-items:center;gap:6px;padding:6px 8px;
   border-radius:var(--radius-sm);background:rgba(90,107,63,.05);
   border:1px solid rgba(90,107,63,.15);font-size:11.5px;color:var(--green);font-weight:600}
+
+/* ============ 连接状态心跳指示器 ============ */
+.conn-status{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;
+  border-radius:10px;font-size:11px;font-family:var(--sans);color:var(--muted);
+  background:transparent;cursor:default;transition:.2s}
+.conn-status.online .conn-dot{background:var(--green);box-shadow:0 0 4px var(--green)}
+.conn-status.offline{background:rgba(161,61,61,.08);color:var(--red)}
+.conn-status.offline .conn-dot{background:var(--red);box-shadow:0 0 4px var(--red)}
+.conn-status.reconnecting{background:rgba(154,107,31,.08);color:var(--yellow)}
+.conn-status.reconnecting .conn-dot{background:var(--yellow);animation:pulse 1.2s infinite}
+.conn-dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex-shrink:0;transition:.2s}
+.conn-text{font-size:10.5px;white-space:nowrap}
+@media(max-width:680px){.conn-text{display:none}}

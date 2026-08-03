@@ -134,6 +134,7 @@ def _assets_summary_for_think(pid: str) -> str:
 # ===== 改进:LLM 调用重试机制 =====
 # 原版: LLM 调用失败直接报错 → 网络抖动/API 限流就挂
 # 改进: 指数退避重试,临时错误自动恢复
+# ===== 关键修复: 5 次重试 + 完善 traceback + 异常分类 =====
 async def _chat_with_retry(
     messages: list[dict],
     cfg,
@@ -144,14 +145,17 @@ async def _chat_with_retry(
     response_format: dict | None = None,
     assistant_prefill: str | None = None,
     stop: list[str] | None = None,
-    max_retries: int = 3,
-    base_delay: float = 2.0,
+    max_retries: int = 5,       # 从 3 增到 5
+    base_delay: float = 1.5,    # 从 2.0 降到 1.5, 首次重试更快
 ) -> dict:
-    """带重试的 LLM 调用。指数退避: 2s → 4s → 8s。
+    """带重试的 LLM 调用。指数退避: 1.5s → 3s → 6s → 12s → 24s。
 
     可重试错误: 超时/429限流/5xx服务端错误/连接错误
     不可重试: 401认证失败/400参数错误 (直接抛出)
     """
+    # 上下文窗口管理: 每次调用前强制压缩, 防止 token 溢出
+    messages = _trim_for_window(messages)
+    
     last_err = None
     for attempt in range(max_retries):
         try:
@@ -166,14 +170,15 @@ async def _chat_with_retry(
             err_str = str(e).lower()
             # 不可重试的错误: 认证失败/参数错误/模型不存在
             if any(kw in err_str for kw in ("401", "403", "invalid api key", "missing credentials", "model_not_found")):
+                logger.error(f"[LLM重试] 不可重试错误: {e}", exc_info=True)
                 raise
             # 可重试: 超时/429/5xx/连接错误
             if attempt < max_retries - 1:
                 delay = base_delay * (2 ** attempt)
-                logger.warning(f"[重试 {attempt+1}/{max_retries}] LLM 调用失败: {e}, {delay}s 后重试")
+                logger.warning(f"[重试 {attempt+1}/{max_retries}] LLM 调用失败: {e}, {delay}s 后重试", exc_info=True)
                 await asyncio.sleep(delay)
             else:
-                logger.error(f"[重试耗尽] LLM 调用 {max_retries} 次均失败: {e}")
+                logger.error(f"[重试耗尽] LLM 调用 {max_retries} 次均失败: {e}", exc_info=True)
     raise last_err  # type: ignore
 
 
@@ -236,8 +241,39 @@ def _check_sandbox(agent_name: str, tool_name: str) -> str | None:
 # ===== 上下文窗口管理 (改进:摘要压缩替代粗暴截断) =====
 # 原版: 超长直接丢弃旧消息 → 丢失重要上下文(角色设定/伏笔/剧情决策)
 # 改进: 超长时把旧消息压缩成摘要,保留关键信息,再拼接最近消息
-MAX_CONTEXT_CHARS = 14000  # 历史对话字符上限(超出触发压缩)
+# ===== 关键修复: 按 token 估算管理, 留 80% 安全余量 =====
+# 原版 MAX_CONTEXT_CHARS=14000 按字符算, 且无安全余量 → 第 2-3 轮必溢出
+# 修复: 按字符近似 token (1 token ≈ 2-3 中文字符), 阈值降到模型上限的 80%
+MAX_CONTEXT_CHARS = 12000  # 对话历史字符上限 (≈ 5000 token, 留足余量给 system prompt)
 KEEP_LAST_TURNS = 8        # 至少保留最近这么多回合
+MODEL_CONTEXT_LIMIT = 32000  # 大多数模型 32k-128k, 取保守值
+SAFE_RATIO = 0.8             # 安全余量: 总 token ≤ 模型上限的 80%
+
+
+def _estimate_tokens(text: str) -> int:
+    """粗略估算 token 数 (不依赖 tiktoken, 避免额外依赖)。
+    
+    经验值: 1 token ≈ 4 字符 (英文) / 1.5 字符 (中文混合)
+    取 2.5 字符/token 作为折中 (偏保守, 宁可多截不少截)
+    """
+    if not text:
+        return 0
+    return max(1, len(str(text)) // 3)
+
+
+def _count_messages_tokens(msgs: list[dict]) -> int:
+    """估算消息列表的总 token 数 (含 role 等开销)。"""
+    total = 0
+    for m in msgs:
+        total += 4  # role + 结构开销
+        content = m.get("content") or ""
+        if isinstance(content, list):
+            # tool_calls 格式
+            content = json.dumps(content, ensure_ascii=False)
+        total += _estimate_tokens(content)
+        if m.get("tool_calls"):
+            total += _estimate_tokens(json.dumps(m["tool_calls"], ensure_ascii=False))
+    return total
 
 
 def _summarize_old_messages(old_msgs: list[dict]) -> str:
@@ -295,6 +331,8 @@ def _trim_for_window(msgs: list[dict]) -> list[dict]:
     1. 旧消息不再直接丢弃,而是压缩成结构化摘要(保留关键决策/工具结果)
     2. 摘要作为 system 消息注入,让模型知道之前发生了什么
     3. 关键约束不变:assistant(tool_calls)+tool 必须成对完整
+    4. ===== 新增: token 估算 + 80% 安全余量检查 =====
+       压缩后仍检查总 token, 若超过 MODEL_CONTEXT_LIMIT * SAFE_RATIO 则继续截断
     """
     sys_msgs = [m for m in msgs if m.get("role") == "system"]
     rest = [m for m in msgs if m.get("role") != "system"]
@@ -302,7 +340,10 @@ def _trim_for_window(msgs: list[dict]) -> list[dict]:
         return msgs
     total = sum(len(str(m.get("content") or "")) for m in rest)
     if total <= MAX_CONTEXT_CHARS:
-        return msgs
+        # 二次检查: token 估算是否在安全范围内
+        est_tokens = _count_messages_tokens(msgs)
+        if est_tokens <= int(MODEL_CONTEXT_LIMIT * SAFE_RATIO):
+            return msgs
     user_idx = [i for i, m in enumerate(rest) if m.get("role") == "user"]
     if not user_idx:
         return msgs  # 无 user 边界,不敢截断,原样返回
@@ -321,7 +362,21 @@ def _trim_for_window(msgs: list[dict]) -> list[dict]:
     old_msgs = rest[:cut]
     summary = _summarize_old_messages(old_msgs)
     note = [{"role": "system", "content": f"【早期对话摘要】({cut} 条消息已压缩)\n{summary}"}]
-    return sys_msgs + note + rest[cut:]
+    result = sys_msgs + note + rest[cut:]
+    # 压缩后二次检查: 若仍超安全阈值, 截断 tool 结果内容 (只保留前 500 字符)
+    est_tokens = _count_messages_tokens(result)
+    safe_limit = int(MODEL_CONTEXT_LIMIT * SAFE_RATIO)
+    if est_tokens > safe_limit:
+        logger.warning(f"[上下文] 压缩后仍超限 ({est_tokens} > {safe_limit} token), 截断长 tool 结果")
+        for m in result:
+            if m.get("role") == "tool":
+                c = m.get("content", "")
+                if len(c) > 500:
+                    m["content"] = c[:500] + "...(已截断)"
+        # 最终检查
+        est_tokens = _count_messages_tokens(result)
+        logger.info(f"[上下文] 截断后 token 估算: {est_tokens}")
+    return result
 
 
 def _build_messages(
@@ -471,7 +526,7 @@ async def self_review(
         },
     ]
     try:
-        resp = await chat(review_messages, model_cfg, temperature=0.2, max_tokens=400)
+        resp = await _chat_with_retry(review_messages, model_cfg, temperature=0.2, max_tokens=400)
         text = resp.get("content", "") or ""
         m = re.search(r"<<<REVIEW>>>\s*(\{.*\})", text, re.S)
         if m:
@@ -550,7 +605,11 @@ async def _exec_tool(
         store.add_run_event(run_id, "tool_call", agent=agent_name, tool=fname,
                             input_=_truncate_for_trace(fargs, 800))
     t0 = time.time()
-    result = await tools.dispatch(pid, fname, fargs)
+    try:
+        result = await tools.dispatch(pid, fname, fargs)
+    except Exception as e:
+        logger.error(f"[{agent_name}] 工具 {fname} 执行异常: {e}", exc_info=True)
+        result = json.dumps({"error": f"工具 {fname} 执行异常: {e}"}, ensure_ascii=False)
     dur_ms = int((time.time() - t0) * 1000)
     logger.info(f"[{agent_name}] 工具 {fname} 耗时={dur_ms}ms 结果={_trunc(result, 200)}")
     if run_id:
@@ -686,14 +745,25 @@ async def run(
     agent_name: 入口 agent,默认 orchestrator 总编。
     """
     s = get_settings()
-    # 新建一次 run 记录,用于 trace 回放/统计
-    run_id = store.create_run(pid, user_input, agent_name)
-    store.add_run_event(run_id, "start", agent=agent_name, input_=user_input)
+    # ===== 启动段异常保护: store/配置/消息构建任何环节出错都转为 error 事件 =====
+    try:
+        # 新建一次 run 记录,用于 trace 回放/统计
+        run_id = store.create_run(pid, user_input, agent_name)
+        store.add_run_event(run_id, "start", agent=agent_name, input_=user_input)
+    except Exception as e:
+        logger.error(f"[run] store.create_run 失败: {e}", exc_info=True)
+        yield _event({"type": "error", "message": f"创建运行记录失败: {e}", "fatal": False})
+        yield _event({"type": "done", "agent": agent_name, "error": True})
+        return
+
     # 单次 run 总时长起点 (用于 run_max_duration 超时保护)
     _run_start_ts = time.time()
     logger.info(f"========== 主 agent 启动 pid={pid} agent={agent_name} max_steps={s.max_steps} run_id={run_id} ==========")
     logger.info(f"[{agent_name}] 用户输入: {_trunc(user_input, 200)}")
-    store.add_message(pid, "user", user_input)
+    try:
+        store.add_message(pid, "user", user_input)
+    except Exception as e:
+        logger.warning(f"[run] store.add_message(user) 失败(非致命): {e}")
 
     # ===== 改进: 主动意图澄清 (信息不足先反问, 不硬猜) =====
     # 注: 原版在此处命中即 early return, 会跳过思考阶段 → 用户看不到思考过程。
@@ -710,8 +780,20 @@ async def run(
     except Exception:
         pass
 
-    messages = _build_messages(pid, agent_name, query=user_input)
-    tool_schema = tools.schema_for(agents.get_tools(agent_name))
+    # ===== 消息构建异常保护: memory/planner/experience 任何模块出错不影响主流程 =====
+    try:
+        messages = _build_messages(pid, agent_name, query=user_input)
+    except Exception as e:
+        logger.error(f"[run] _build_messages 失败, 用最小消息集兜底: {e}", exc_info=True)
+        messages = [
+            {"role": "system", "content": agents.get_prompt(agent_name)},
+            {"role": "user", "content": user_input},
+        ]
+    try:
+        tool_schema = tools.schema_for(agents.get_tools(agent_name))
+    except Exception as e:
+        logger.error(f"[run] tools.schema_for 失败, 禁用工具兜底: {e}", exc_info=True)
+        tool_schema = None
     logger.info(f"[{agent_name}] 装载消息 {len(messages)} 条, 工具 {len(agents.get_tools(agent_name))} 个: {agents.get_tools(agent_name)}")
 
     # 事件缓冲:子 agent 委派过程中产生的事件也要吐给前端
@@ -1136,7 +1218,11 @@ async def run(
                     delegation_log=delegation_log,
                 ))
                 if hb <= 0:
-                    result = await exec_task
+                    try:
+                        result = await exec_task
+                    except Exception as e:
+                        logger.error(f"[{agent_name}] 工具 {fname} 执行异常: {e}", exc_info=True)
+                        result = json.dumps({"error": f"工具 {fname} 执行异常: {e}"}, ensure_ascii=False)
                 else:
                     while True:
                         done, _ = await asyncio.wait(
@@ -1148,7 +1234,11 @@ async def run(
                             break
                         yield _event({"type": "heartbeat", "ts": time.time(),
                                       "run_id": run_id})
-                    result = exec_task.result()
+                    try:
+                        result = exec_task.result()
+                    except Exception as e:
+                        logger.error(f"[{agent_name}] 工具 {fname} 执行异常: {e}", exc_info=True)
+                        result = json.dumps({"error": f"工具 {fname} 执行异常: {e}"}, ensure_ascii=False)
                 logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 结果={_trunc(result, 200)}")
                 while event_queue:
                     yield event_queue.pop(0)

@@ -36,20 +36,6 @@
       </div>
     </div>
 
-    <!-- 思考面板 (Agent 运行时替换文件树) -->
-    <div class="think-panel hidden" id="think-panel">
-      <div class="tp-head">
-        <span class="tp-head-icon">🧠</span>
-        <span class="tp-head-title">思考过程</span>
-        <span class="tp-pulse"></span>
-      </div>
-      <div class="tp-stream" id="tp-stream">
-        <div class="tp-entry tp-loading">
-          <span class="tp-dot"></span>
-          <span class="tp-text">正在思考<span class="thinking-dots"></span></span>
-        </div>
-      </div>
-    </div>
     <div class="tree-actions">
       <button class="btn ghost sm" id="add-element-btn">+ 设定</button>
       <button class="btn ghost sm" id="new-chapter-btn">+ 章节</button>
@@ -67,14 +53,6 @@
       <div class="conn-status" id="conn-status" title="后端连接状态">
         <span class="conn-dot" id="conn-dot"></span>
         <span class="conn-text" id="conn-text"></span>
-      </div>
-      <!-- 思考折叠条 (顶栏右侧,点击展开/折叠) -->
-      <div class="think-bar hidden" id="think-bar">
-        <button class="think-bar-btn" id="think-bar-btn">
-          <span class="think-bar-icon">🧠</span>
-          <span class="think-bar-text" id="think-bar-text">思考中…</span>
-          <span class="think-bar-arrow" id="think-bar-arrow">▼</span>
-        </button>
       </div>
       <div class="actions">
         <div class="dropdown">
@@ -105,11 +83,6 @@
         </button>
       </div>
     </header>
-
-    <!-- 思考详情面板 (顶栏下方,默认隐藏,点击think-bar展开) -->
-    <div class="think-detail hidden" id="think-detail">
-      <div class="think-detail-stream" id="think-detail-stream"></div>
-    </div>
 
     <div class="chat" id="chat">
       <div class="empty" id="empty-state">

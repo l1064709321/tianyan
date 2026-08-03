@@ -935,6 +935,8 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .delegate-speak .delegate-task{font-size:13px;color:var(--ink2);line-height:1.6;flex:1;min-width:120px}
 .stream-tip{font-size:12px;color:var(--muted);text-align:center;padding:8px 0;margin-top:6px;
   border-top:1px dashed var(--border2);font-style:italic}
+.stream-tip.retry-tip{color:var(--accent,#a13d3d);animation:retryPulse 1.5s ease-in-out infinite}
+@keyframes retryPulse{0%,100%{opacity:.5}50%{opacity:1}}
 
 /* === 群聊式: 专家 agent 独立气泡 (思考在气泡外) === */
 .msg.sub-agent{align-items:flex-start;margin:8px 0;animation:subAgentIn .3s ease-out}
@@ -981,6 +983,25 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .st-dot{width:4px;height:4px;border-radius:50%;margin-top:5px;flex-shrink:0;background:var(--border)}
 .st-text{flex:1;word-break:break-word;color:var(--muted);font-size:clamp(10px,1.1vw,11px)}
 .st-text b{color:var(--ink2);font-weight:500;font-size:clamp(9.5px,1vw,10.5px)}
+/* 工具调用胶囊小标签 (🔧 工具名 ✓) —— 规则5: 不显示 JSON */
+.st-tool-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:11px;
+  background:rgba(154,107,31,.08);border:1px solid rgba(154,107,31,.22);
+  font-size:clamp(10px,1.1vw,11px);font-family:var(--sans);color:var(--ink2);
+  white-space:nowrap;line-height:1.6;transition:.15s}
+.st-tool-tag .st-tool-status{font-size:10px;opacity:.65}
+.st-entry.st-tool .st-tool-tag{color:var(--yellow)}
+.st-entry.st-done .st-tool-tag{background:rgba(90,107,63,.08);border-color:rgba(90,107,63,.28);color:var(--green)}
+.st-entry.st-done .st-tool-tag .st-tool-status{opacity:.9}
+/* 总编气泡内的思考折叠 (与子 agent 共用 .sub-think-toggle/.sub-think-panel) */
+.msg.assistant .sub-think-toggle{display:inline-flex;align-items:center;gap:4px;
+  cursor:pointer;font-size:clamp(10px,1.1vw,11px);font-family:var(--sans);color:var(--muted);
+  transition:.15s;white-space:nowrap;padding:2px 0;margin-bottom:2px}
+.msg.assistant .sub-think-toggle:hover{color:var(--ink2)}
+.msg.assistant .sub-think-toggle .arrow{font-size:9px;transition:transform .2s}
+.msg.assistant .sub-think-toggle.expanded .arrow{transform:rotate(180deg)}
+.msg.assistant .sub-think-panel{margin:2px 0 6px}
+.msg.assistant .sub-think-toggle + .sub-think-panel{margin-top:0}
+
 /* 任务条 */
 .sub-task{font-size:12px;color:var(--ink2);background:var(--paper);
   padding:8px 10px;border-radius:var(--radius-sm);margin-bottom:8px;

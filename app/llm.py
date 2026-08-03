@@ -5,10 +5,16 @@ DeepSeek / 通义 / 智谱 / 月之暗面 / Ollama 等几乎所有在线与本�
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, AsyncIterator, Optional
 
-_HTTP_TIMEOUT = 60  # LLM 请求超时 (秒)
+logger = logging.getLogger("novel_agent.llm")
+
+try:
+    import httpx
+except Exception:  # pragma: no cover
+    httpx = None  # type: ignore
 
 try:
     import litellm  # type: ignore
@@ -16,8 +22,43 @@ try:
     litellm.set_verbose = False
     litellm.drop_params = True
     litellm.modify_params = True
+    # ===== 关键修复: litellm 全局超时设为 None (永不超时) =====
+    # 原版 _HTTP_TIMEOUT=60 导致 LLM 思考期间(>60s)请求被掐断 → ERR_STREAM_PREMATURE_CLOSE
+    litellm.request_timeout = None
+    # litellm 内部重试 (指数退避), 覆盖 429/5xx/连接错误
+    # 设为 2: 快速恢复 429 限流 (尊重 Retry-After 头), 不与应用层 5 次重试叠加过多
+    litellm.num_retries = 2
+    litellm.retry_after = True  # 尊重 Retry-After 头
 except Exception:  # pragma: no cover
     litellm = None  # type: ignore
+
+# ===== 关键修复: 全局共享 httpx 连接池 =====
+# 原版: litellm 每次调用内部新建 AsyncHTTPHandler → 连接数不可控 + keep-alive 失效
+# 修复: 全局单例 httpx.AsyncClient, timeout=None(永不超时), 连接池 20/50
+_global_http_client: Optional[Any] = None
+
+def _get_http_client():
+    """获取全局共享的 httpx.AsyncClient 单例。
+    
+    timeout=None: 彻底关闭 HTTP 超时, 让 LLM 思考多久都不被掐断
+    max_keepalive_connections=20: 复用连接, 避免每次 new
+    max_connections=50: 并行工具调用不抢占主连接池
+    """
+    global _global_http_client
+    if _global_http_client is not None:
+        return _global_http_client
+    if httpx is None:
+        return None
+    _global_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(None),  # 彻底关闭超时
+        limits=httpx.Limits(
+            max_keepalive_connections=20,
+            max_connections=50,
+            keepalive_expiry=120,  # 连接保活 2 分钟
+        ),
+    )
+    logger.info("[LLM] 全局 httpx 连接池已初始化 (timeout=None, keepalive=20, max=50)")
+    return _global_http_client
 
 from .config import ModelConfig
 
@@ -160,8 +201,13 @@ async def chat(
         "messages": msgs,
         "temperature": temperature if temperature is not None else cfg.temperature,
         "max_tokens": max_tokens if max_tokens is not None else cfg.max_tokens,
-        "timeout": _HTTP_TIMEOUT,
+        # 关键: 不设 timeout, 让 litellm 用全局 None (永不超时)
+        "timeout": None,
     }
+    # 注入全局共享 httpx 连接池 (避免每次新建连接)
+    _client = _get_http_client()
+    if _client is not None:
+        kwargs["client"] = _client
     if tools:
         kwargs["tools"] = tools
         kwargs["parallel_tool_calls"] = False
@@ -172,6 +218,8 @@ async def chat(
     try:
         resp = await litellm.acompletion(**kwargs)
     except Exception as e:
+        # 详细异常日志 (含 traceback), 方便复盘
+        logger.error(f"[LLM chat] 调用失败: {e}", exc_info=True)
         raise LLMError(f"LLM 调用失败: {e}") from e
     choice = resp.choices[0].message
     # prefill 模式: 模型续写在 prefill 之后,返回的 content 不含 prefill。
@@ -214,20 +262,30 @@ async def stream(
         "temperature": temperature if temperature is not None else cfg.temperature,
         "max_tokens": eff_max if eff_max is not None else cfg.max_tokens,
         "stream": True,
-        "timeout": _HTTP_TIMEOUT,
+        "timeout": None,  # 关键: 永不超时
     }
+    # 注入全局共享 httpx 连接池
+    _client = _get_http_client()
+    if _client is not None:
+        kwargs["client"] = _client
     if stop:
         kwargs["stop"] = stop
     try:
         stream_obj = await litellm.acompletion(**kwargs)
     except Exception as e:
+        logger.error(f"[LLM stream] 流式调用失败: {e}", exc_info=True)
         raise LLMError(f"LLM 流式调用失败: {e}") from e
-    async for chunk in stream_obj:
-        try:
-            delta = chunk.choices[0].delta
-        except Exception:
-            continue
-        # 只 yield 正文 content; reasoning_content (思考过程) 不输出给用户
-        content = getattr(delta, "content", None)
-        if content:
-            yield content
+    # ===== 流式中断保护: 网络抖动/API 断连导致 stream 中途断开时记录日志 =====
+    try:
+        async for chunk in stream_obj:
+            try:
+                delta = chunk.choices[0].delta
+            except Exception:
+                continue
+            # 只 yield 正文 content; reasoning_content (思考过程) 不输出给用户
+            content = getattr(delta, "content", None)
+            if content:
+                yield content
+    except Exception as e:
+        logger.error(f"[LLM stream] 流式中途断开: {e}", exc_info=True)
+        raise LLMError(f"LLM 流式中途断开: {e}") from e

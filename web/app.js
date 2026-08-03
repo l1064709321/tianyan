@@ -664,42 +664,29 @@ async function loadMessages(pid) {
       continue;
     }
     if (m.role === "assistant" && m.tool_name === "tool_calls") {
-      // 开始一个 assistant 消息, 收集后续 tool 结果 + 最终正文
+      // 历史消息: 双层折叠 (思考过程默认折叠 + 答案默认展开)
+      // 规则5: 工具调用渲染成 🔧 工具名 ✓ 胶囊, 不显示 JSON
       const ast = appendMessage("assistant", "", false);
       ast.el.innerHTML = "";
-      const chain = document.createElement("div");
-      chain.className = "think-chain";
-      ast.el.appendChild(chain);
-      // 解析 tool_calls
+      const toggle = document.createElement("div");
+      toggle.className = "sub-think-toggle";
+      toggle.innerHTML = `思考过程 <span class="arrow">▼</span>`;
+      toggle.onclick = () => toggleSubThink(toggle);
+      const panel = document.createElement("div");
+      panel.className = "sub-think-panel";
+      const body = document.createElement("div");
+      body.className = "sub-think-body";
+      panel.appendChild(body);
+      ast.el.appendChild(toggle);
+      ast.el.appendChild(panel);
+      // 解析 tool_calls, 每个渲染成已完成胶囊 (历史工具均已执行完毕)
       let calls = [];
       try { calls = JSON.parse(m.content || "[]"); } catch (e) {}
-      // thinking 暂未单独存, 用 tool_calls 的顺序作为执行步骤
       for (let k = 0; k < calls.length; k++) {
         const c = calls[k];
         const fn = c.function?.name || "";
-        let args = {};
-        try { args = JSON.parse(c.function?.arguments || "{}"); } catch (e) {}
-        // 找紧跟的 tool 结果 (tool_call_id 匹配)
-        let result = "";
-        let r = i + 1;
-        while (r < msgs.length && msgs[r].role === "tool" && msgs[r].tool_call_id !== c.id) r++;
-        if (r < msgs.length && msgs[r].role === "tool") {
-          result = msgs[r].content || "";
-        }
-        const isErr = result.startsWith('{"error') || result.includes('"error"');
-        const tag = isErr ? "done" : "done";
-        const blk = document.createElement("div");
-        blk.className = `think-block tb-tool tb-${isErr ? "think" : "done"} collapsed`;
-        blk.innerHTML = `<div class="tb-head">
-          <span class="tb-tag exec">执行</span>
-          <span class="tb-title">${esc(cnTool(fn))}</span>
-          <span class="tb-arrow">▼</span>
-        </div>
-        <div class="tb-body">
-          <div class="tb-args">${esc(JSON.stringify(args, null, 2))}</div>
-          <div class="tb-result">${prettyResult(result, fn)}</div>
-        </div>`;
-        chain.appendChild(blk);
+        if (fn === "delegate_to_agent") continue; // 委派由 @消息体现, 不重复
+        addToolCapsule(body, cnTool(fn), false);
       }
       // 跳过已消费的 tool 消息, 找最终 assistant 正文
       let j = i + 1;
@@ -795,6 +782,11 @@ function rotateOrchestratorBubble(assistant) {
   assistant.chainEl = null;
   assistant.answerEl = null;
   assistant.rawBuf = "";
+  // 重置思考面板引用, 新气泡惰性重建 (ensureOrchestratorThinkPanel)
+  assistant.thinkPanel = null;
+  assistant.thinkBody = null;
+  assistant.thinkBuf = "";
+  if (assistant.toolQueues) assistant.toolQueues.orchestrator = [];
   assistant.closed = false;
   scrollChat();
 }
@@ -818,11 +810,16 @@ async function send(text) {
 
   const assistant = appendMessage("assistant", "", true);
   let streamCompleted = false;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT = 3;  // 从 2 增到 3, 断网恢复更有余量
 
-  try {
+  async function attemptFetch() {
     const res = await fetch(`/api/projects/${currentProject.id}/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+      },
       body: JSON.stringify({ input: text, agent: "orchestrator" }),
       // keepalive 让长连接更稳定 (沙箱预览环境下减少被中断概率)
       keepalive: true,
@@ -833,20 +830,51 @@ async function send(text) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
+    // heartbeat 超时检测: 后端每 5s 发一次心跳, 设 20s 兜底 (4 倍冗余)
+    let lastDataTs = Date.now();
+    const HB_TIMEOUT = 20000;
+
     while (true) {
-      const { done, value } = await reader.read();
+      // 竞速: reader.read() vs heartbeat 超时
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("hb_timeout")), HB_TIMEOUT)
+      );
+      let result;
+      try {
+        result = await Promise.race([readPromise, timeoutPromise]);
+      } catch (e) {
+        if (e.message === "hb_timeout") {
+          // heartbeat 超时, 主动断开让上层走重连逻辑
+          reader.cancel().catch(() => {});
+          throw new Error("heartbeat_timeout");
+        }
+        throw e;
+      }
+      const { done, value } = result;
       if (done) break;
+      lastDataTs = Date.now();
       buf += decoder.decode(value, { stream: true });
+      // SSE 事件以 \n\n 分隔, 兼容单 \n 的后端格式
       const lines = buf.split("\n");
       buf = lines.pop();
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data: ")) continue;
         let evt;
-        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+        try { evt = JSON.parse(trimmed.slice(6)); } catch { continue; }
         handleEvent(evt, assistant);
-        if (evt.type === "done" || evt.type === "error") streamCompleted = true;
+        // done 事件: 正常完成
+        if (evt.type === "done") streamCompleted = true;
+        // 致命 error (fatal 未标或 fatal=true): 标记完成, 后续断连不报错
+        // 非致命 error (fatal=false): 后端会继续发数据, 不标记完成, 不断连
+        if (evt.type === "error" && evt.fatal !== false) streamCompleted = true;
       }
     }
+  }
+
+  try {
+    await attemptFetch();
     // 清除 loading
     removeThinkLoading();
   } catch (e) {
@@ -856,7 +884,33 @@ async function send(text) {
       hideThinkPanel();
       return;
     }
-    // 未完成: 温和小字提示 (不用感叹号, 不覆盖已渲染内容)
+    // heartbeat 超时或网络中断: 尝试重连 (最多 MAX_RECONNECT 次)
+    // 每次重连前等待递增延迟 (Retry-After 风格): 2s → 4s → 5s
+    while (reconnectAttempts < MAX_RECONNECT && !streamCompleted &&
+           (e.message === "heartbeat_timeout" || e.message.includes("fetch") || e.message.includes("network"))) {
+      reconnectAttempts++;
+      const delay = Math.min(2000 * reconnectAttempts, 5000);
+      console.warn(`[SSE] 第 ${reconnectAttempts}/${MAX_RECONNECT} 次重连, ${delay}ms 后重试...`);
+      // 显示"模型思考中"提示 (不覆盖已渲染内容)
+      const retryTip = document.createElement("div");
+      retryTip.className = "stream-tip retry-tip";
+      retryTip.textContent = "模型思考中，请稍候…";
+      assistant.el.appendChild(retryTip);
+      await new Promise(r => setTimeout(r, delay));
+      retryTip.remove();
+      try {
+        await attemptFetch();
+        removeThinkLoading();
+        return;
+      } catch (e2) {
+        // 继续循环尝试下一次重连
+        if (streamCompleted) {
+          hideThinkPanel();
+          return;
+        }
+      }
+    }
+    // 未完成且重连失败: 温和小字提示 (不用感叹号, 不覆盖已渲染内容)
     // 后端可能仍在处理或已断开, 已显示的思考/委派内容保留
     const tip = document.createElement("div");
     tip.className = "stream-tip";
@@ -866,72 +920,142 @@ async function send(text) {
   }
 }
 
-// ============ 顶栏思考折叠条 ============
-function showThinkPanel() {
-  const bar = $("#think-bar");
-  const detail = $("#think-detail");
-  const stream = $("#think-detail-stream");
-  if (bar) bar.classList.remove("hidden");
-  if (detail) { detail.classList.remove("open"); detail.classList.add("hidden"); }
-  if (bar) bar.classList.remove("expanded");
-  if (stream) {
-    stream.innerHTML = `<div class="td-entry td-think">
-      <span class="td-dot"></span>
-      <span class="td-text">正在思考<span class="thinking-dots"></span></span>
-    </div>`;
+// ============ 思考链展示 (严格对齐 tianyan-preview.html 范式) ============
+// 规则1: 禁止全局日志框 —— 以下函数保留为 no-op, 兼容旧调用点, 不再向任何全局容器写入
+function showThinkPanel() { /* no-op: 不再隐藏文件树 / 不再显示全局思考面板 */ }
+function hideThinkPanel() { /* no-op */ }
+function removeThinkLoading() { /* no-op */ }
+function appendThink() { /* no-op: 全局日志已废除, 思考只挂在归属气泡内 */ }
+
+// 规则3: 双层折叠 toggle —— 点击 "思考过程 ▼" 滑出/收起当前气泡的思考面板
+function toggleSubThink(btn) {
+  btn.classList.toggle("expanded");
+  const panel = btn.closest(".msg")?.querySelector(".sub-think-panel");
+  if (panel) panel.classList.toggle("open");
+}
+window.toggleSubThink = toggleSubThink;
+
+// 规则4: 后端思考文本(字符串)按序号(1. 2.)或换行拆成数组
+function splitThinkItems(text) {
+  if (!text) return [];
+  const t = String(text).trim();
+  if (!t) return [];
+  // 优先按 "换行 + 序号" 拆分
+  const parts = t.split(/\n\s*(?=\d+[.、)]\s)/);
+  if (parts.length > 1) {
+    return parts.map((s) => s.replace(/^\d+[.、)]\s*/, "").trim()).filter(Boolean);
   }
-  // 点击展开/折叠
-  if (bar && !bar._bound) {
-    bar._bound = true;
-    $("#think-bar-btn").onclick = () => {
-      const d = $("#think-detail");
-      if (d.classList.contains("open")) {
-        d.classList.remove("open");
-        bar.classList.remove("expanded");
-        setTimeout(() => d.classList.add("hidden"), 300);
-      } else {
-        d.classList.remove("hidden");
-        requestAnimationFrame(() => d.classList.add("open"));
-        bar.classList.add("expanded");
-      }
-    };
+  // 回退: 按换行拆
+  return t.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+}
+
+// 向某个 think-body 追加一条思考条目 (.st-entry.st-think)
+function addThinkItem(thinkBody, text) {
+  if (!thinkBody) return;
+  const items = splitThinkItems(text);
+  for (const it of items) {
+    const div = document.createElement("div");
+    div.className = "st-entry st-think";
+    div.innerHTML = `<span class="st-dot"></span><span class="st-text">${esc(it)}</span>`;
+    thinkBody.appendChild(div);
   }
+  scrollChat();
 }
 
-function hideThinkPanel() {
-  const bar = $("#think-bar");
-  const detail = $("#think-detail");
-  if (bar) bar.classList.add("hidden");
-  if (detail) { detail.classList.remove("open"); detail.classList.add("hidden"); }
-}
-
-function removeThinkLoading() {
-  const stream = $("#think-detail-stream");
-  if (!stream) return;
-  const loading = stream.querySelector(".td-entry.td-think");
-  // 只移除 "正在思考" 的加载条目 (保留其他)
-  if (loading && loading.textContent.includes("正在思考")) loading.remove();
-}
-
-function appendThink(html) {
-  removeThinkLoading();
-  const stream = $("#think-detail-stream");
-  if (!stream) return;
+// 规则5: 工具调用渲染成 🔧 工具名 (…/✓) 胶囊小标签, 插在思考列表里 (不显示 JSON)
+function addToolCapsule(thinkBody, toolName, pending) {
+  if (!thinkBody) return null;
   const div = document.createElement("div");
-  div.innerHTML = html;
-  if (div.firstElementChild) {
-    stream.appendChild(div.firstElementChild);
-    stream.scrollTop = stream.scrollHeight;
-  }
-  // 更新顶栏摘要
-  const barText = $("#think-bar-text");
-  if (barText) {
-    const count = stream.children.length;
-    const lastEntry = stream.lastElementChild;
-    const text = lastEntry ? lastEntry.textContent.slice(0, 30) : "";
-    barText.textContent = `思考中 · ${count}步 · ${text}${text.length >= 30 ? "…" : ""}`;
-  }
+  div.className = `st-entry ${pending ? "st-tool" : "st-done"}`;
+  div.innerHTML = `<span class="st-dot"></span>
+    <span class="st-tool-tag">🔧 <b>${esc(toolName)}</b>
+      <span class="st-tool-status">${pending ? "…" : "✓"}</span></span>`;
+  thinkBody.appendChild(div);
+  scrollChat();
+  return div;
 }
+
+// 把胶囊标记为完成
+function doneToolCapsule(entry) {
+  if (!entry) return;
+  entry.classList.remove("st-tool");
+  entry.classList.add("st-done");
+  const st = entry.querySelector(".st-tool-status");
+  if (st) st.textContent = "✓";
+}
+
+// 取/建某 agent 的思考面板 body
+// 子 agent: assistant.subBubbles[ag].thinkBody
+// 总编: assistant.thinkBody (惰性创建)
+function getThinkBody(assistant, ag) {
+  if (ag && ag !== "orchestrator") {
+    let sub = assistant.subBubbles && assistant.subBubbles[ag];
+    if (!sub) {
+      // 兜底: sub_agent_start 未到时自动建子 agent 气泡
+      sub = createSubAgentBubble(assistant, ag, "");
+    }
+    return sub ? sub.thinkBody : null;
+  }
+  return ensureOrchestratorThinkPanel(assistant);
+}
+
+// 每个 agent 维护一个待完成工具胶囊的 FIFO 队列 (observation 按序消费)
+function getToolQueue(assistant, ag) {
+  const key = ag || "orchestrator";
+  if (!assistant.toolQueues) assistant.toolQueues = {};
+  if (!assistant.toolQueues[key]) assistant.toolQueues[key] = [];
+  return assistant.toolQueues[key];
+}
+
+// 给总编气泡惰性注入双层折叠结构 (.sub-think-toggle + .sub-think-panel)
+// 不重复 .sub-role (外层 .role 已显示 "✦ 天衍"), 只加 toggle + panel
+function ensureOrchestratorThinkPanel(assistant) {
+  if (assistant.thinkBody) return assistant.thinkBody;
+  const bubble = assistant.el;
+  if (!bubble) return null;
+  const toggle = document.createElement("div");
+  toggle.className = "sub-think-toggle";
+  toggle.innerHTML = `思考过程 <span class="arrow">▼</span>`;
+  toggle.onclick = () => toggleSubThink(toggle);
+  const panel = document.createElement("div");
+  panel.className = "sub-think-panel";
+  panel.innerHTML = `<div class="sub-think-body"></div>`;
+  bubble.insertBefore(panel, bubble.firstChild);
+  bubble.insertBefore(toggle, panel);
+  assistant.thinkPanel = panel;
+  assistant.thinkBody = panel.querySelector(".sub-think-body");
+  return assistant.thinkBody;
+}
+
+// 抽出: 创建子 agent 气泡 (sub_agent_start 与 step 兜底共用)
+function createSubAgentBubble(assistant, ag, task) {
+  const agLbl = AGENT_LABELS[ag] || ag;
+  const agIcon = AGENT_ICONS[ag] || "👤";
+  const subDiv = document.createElement("div");
+  subDiv.className = `msg sub-agent agent-${ag}`;
+  subDiv.dataset.agent = ag;
+  subDiv.innerHTML = `<div class="sub-header">
+      <div class="sub-role">${agIcon} ${esc(agLbl)}</div>
+      <div class="sub-think-toggle" onclick="toggleSubThink(this)">
+        思考过程 <span class="arrow">▼</span>
+      </div>
+    </div>
+    <div class="sub-think-panel"><div class="sub-think-body"></div></div>
+    <div class="bubble sub-bubble">
+      ${task ? `<div class="sub-task"><div class="sub-task-label">📦 接到任务</div>${esc(task.slice(0, 300))}${task.length > 300 ? "…" : ""}</div>` : ""}
+      <div class="sub-answer-wrap"></div>
+    </div>`;
+  $("#chat").appendChild(subDiv);
+  if (!assistant.subBubbles) assistant.subBubbles = {};
+  assistant.subBubbles[ag] = {
+    el: subDiv,
+    thinkBody: subDiv.querySelector(".sub-think-body"),
+    answerWrap: subDiv.querySelector(".sub-answer-wrap"),
+  };
+  scrollChat();
+  return assistant.subBubbles[ag];
+}
+
 
 function handleEvent(evt, assistant) {
   const bubble = assistant.el;
@@ -948,49 +1072,38 @@ function handleEvent(evt, assistant) {
       break;
     }
     case "think_start": {
-      // 思考开始: 在顶栏折叠区创建流式条目 (不在气泡里)
-      const round = evt.round || 1;
-      const stream = $("#think-detail-stream");
-      if (stream) {
-        const entry = document.createElement("div");
-        entry.className = "td-entry td-think";
-        entry.dataset.thinkround = round;
-        entry.innerHTML = `<span class="td-dot"></span><span class="td-text"><b>轮${round}</b> <span class="td-think-content"></span><span class="thinking-dots"></span></span>`;
-        stream.appendChild(entry);
-        stream.scrollTop = stream.scrollHeight;
-        assistant.curThinkEntry = entry;
-        assistant.curThinkContent = entry.querySelector(".td-think-content");
-      }
+      // 规则2: 总编思考挂进总编自己气泡的 .sub-think-panel (不再进全局日志)
+      if (assistant.closed) rotateOrchestratorBubble(assistant);
+      ensureOrchestratorThinkPanel(assistant);
+      assistant.thinkBuf = "";
       break;
     }
     case "think_token": {
-      // 逐字追加到顶栏折叠区的思考条目
-      if (assistant.curThinkContent && evt.text) {
-        assistant.curThinkContent.appendChild(document.createTextNode(evt.text));
-      }
+      // 逐字累积到缓冲, think_end 时统一拆条渲染 (思考默认折叠, 流式期无需实时刷)
+      if (evt.text) assistant.thinkBuf = (assistant.thinkBuf || "") + evt.text;
       break;
     }
     case "think_end": {
-      // 思考结束: 更新顶栏折叠区条目
+      // 规则4: 把累积的思考文本按序号/换行拆成条目, 渲进总编气泡的思考面板
+      const body = assistant.thinkBody;
+      if (body && assistant.thinkBuf) {
+        addThinkItem(body, assistant.thinkBuf);
+      }
+      // 可行性结论作为一条摘要
       const feasible = evt.feasible;
       const reason = evt.reason || "";
-      const missing = evt.missing || "";
       const plan = evt.plan || [];
-      if (assistant.curThinkEntry) {
-        const dots = assistant.curThinkEntry.querySelector(".thinking-dots");
-        if (dots) dots.remove();
-        const text = assistant.curThinkEntry.querySelector(".td-text");
-        if (text) {
-          const planStr = plan.length ? ` → ${plan.join(" → ")}` : "";
-          const missStr = missing ? ` ⚠缺: ${missing}` : "";
-          text.innerHTML = `<b>轮${evt.round || 1}</b> ${feasible ? "✓" : "✗"} ${esc(reason)}${planStr}${missStr}`;
-        }
-        assistant.curThinkEntry.className = `td-entry ${feasible ? "td-done" : "td-error"}`;
+      const missing = evt.missing || "";
+      if (body && (reason || plan.length || missing)) {
+        const planStr = plan.length ? ` → ${plan.join(" → ")}` : "";
+        const missStr = missing ? ` ⚠缺: ${missing}` : "";
+        const sum = document.createElement("div");
+        sum.className = "st-entry st-think";
+        sum.innerHTML = `<span class="st-dot"></span><span class="st-text"><b>${feasible ? "✓ 可行" : "✗ 不可行"}</b> ${esc(reason)}${esc(planStr)}${esc(missStr)}</span>`;
+        body.appendChild(sum);
+        scrollChat();
       }
-      const barText = $("#think-bar-text");
-      if (barText) barText.textContent = `思考完成 · ${feasible ? "可行" : "不可行"} · ${esc(reason.slice(0, 20))}`;
-      assistant.curThinkEntry = null;
-      assistant.curThinkContent = null;
+      assistant.thinkBuf = "";
       break;
     }
     case "delegate": {
@@ -1039,55 +1152,21 @@ function handleEvent(evt, assistant) {
       break;
     }
     case "sub_agent_start": {
-      // 群聊式: 专家 agent 开始独立发言, 建独立聊天气泡
+      // 规则2: 专家 agent 建独立气泡, 思考挂在该气泡内 (不进全局日志)
       const ag = evt.agent || "";
-      const agLbl = AGENT_LABELS[ag] || ag;
-      const agIcon = AGENT_ICONS[ag] || "👤";
       const task = evt.task || "";
       if (ag) updateActiveAgent(ag);
-      // 左侧思考面板: 标记专家开始
-      appendThink(`<div class="td-entry td-sub-start">
-        <span class="td-icon">${agIcon}</span>
-        <span class="td-text"><span class="td-tag sub">发言</span> <b>${esc(agLbl)}</b>${task ? "：" + esc(task.slice(0, 50)) : ""}</span>
-      </div>`);
-      // 主对话区: 建专家独立气泡 (思考在气泡外面)
-      const subDiv = document.createElement("div");
-      subDiv.className = `msg sub-agent agent-${ag}`;
-      subDiv.dataset.agent = ag;
-      subDiv.innerHTML = `<div class="sub-header">
-          <div class="sub-role">${agIcon} ${esc(agLbl)}</div>
-          <div class="sub-think-toggle" onclick="this.classList.toggle('expanded');this.closest('.msg').querySelector('.sub-think-panel').classList.toggle('open')">
-            思考过程 <span class="arrow">▼</span>
-          </div>
-        </div>
-        <div class="sub-think-panel"><div class="sub-think-body"></div></div>
-        <div class="bubble sub-bubble">
-          ${task ? `<div class="sub-task"><div class="sub-task-label">📦 接到任务</div>${esc(task.slice(0, 300))}${task.length > 300 ? "…" : ""}</div>` : ""}
-          <div class="sub-answer-wrap"></div>
-        </div>`;
-      $("#chat").appendChild(subDiv);
-      // 缓存到 assistant 上, 供后续 sub_think/sub_answer 填充
-      if (!assistant.subBubbles) assistant.subBubbles = {};
-      assistant.subBubbles[ag] = {
-        el: subDiv,
-        thinkBody: subDiv.querySelector(".sub-think-body"),
-        answerWrap: subDiv.querySelector(".sub-answer-wrap"),
-      };
-      scrollChat();
+      createSubAgentBubble(assistant, ag, task);
       break;
     }
     case "sub_think": {
-      // 群聊式: 专家 agent 的思考过程追加到气泡外面的思考面板
+      // 规则4: 专家 agent 思考文本按序号/换行拆成条目, 追加到该专家气泡的思考面板
       const ag = evt.agent || "";
       const text = evt.text || "";
       if (!text) break;
       const entry = assistant.subBubbles && assistant.subBubbles[ag];
       if (!entry || !entry.thinkBody) break;
-      const div = document.createElement("div");
-      div.className = "st-entry st-think";
-      div.innerHTML = `<span class="st-dot"></span><span class="st-text">${esc(text)}</span>`;
-      entry.thinkBody.appendChild(div);
-      scrollChat();
+      addThinkItem(entry.thinkBody, text);
       break;
     }
     case "sub_answer": {
@@ -1187,136 +1266,33 @@ function handleEvent(evt, assistant) {
       break;
     }
     case "step": {
+      // 规则5: 工具调用统一渲染成 🔧 工具名 胶囊, 插在归属 agent 的思考列表里 (不显示 JSON)
       const ag = evt.agent || "";
-      const agLbl = ag ? (AGENT_LABELS[ag] || ag) : "";
-      const agIcon = ag ? (AGENT_ICONS[ag] || "") : "";
       const toolName = cnTool(evt.tool || "");
 
-      // 左侧面板: 思考过程
-      if (evt.thinking) {
-        const agTag = agIcon ? `${agIcon} ${esc(agLbl)}` : "";
-        appendThink(`<div class="td-entry td-think">
-          <span class="td-dot"></span>
-          <span class="td-text">${agTag ? `<b>${agTag}</b>：` : ""}${esc(evt.thinking)}</span>
-        </div>`);
-      }
-
-      // 左侧面板: 工具调用条目
-      appendThink(`<div class="td-entry td-tool">
-        <span class="td-dot"></span>
-        ${agIcon ? `<span class="td-icon">${agIcon}</span>` : ""}
-        <span class="td-text"><span class="td-tag tool">调用</span> <b>${esc(toolName)}</b>${agIcon ? " · " + esc(agLbl) : ""}</span>
-      </div>`);
-
-      // delegate_to_agent 工具的展示由 delegate 事件负责, 此处跳过
-      if (evt.tool === "delegate_to_agent") {
+      // delegate_to_agent 的展示由 delegate 事件负责; "(完成)" 非真实工具, 跳过
+      if (evt.tool === "delegate_to_agent" || evt.tool === "(完成)") {
         scrollChat();
         break;
       }
-
-      // ===== 子 agent 工具调用: 追加到子 agent 的思考面板 =====
-      let subEntry = assistant.subBubbles && assistant.subBubbles[ag];
-      // fallback: 如果 sub_agent_start 还没到,自动创建子 agent 气泡
-      if (ag && ag !== "orchestrator" && !subEntry) {
-        const agLbl2 = AGENT_LABELS[ag] || ag;
-        const agIcon2 = AGENT_ICONS[ag] || "👤";
-        const subDiv = document.createElement("div");
-        subDiv.className = `msg sub-agent agent-${ag}`;
-        subDiv.dataset.agent = ag;
-        subDiv.innerHTML = `<div class="sub-header">
-            <div class="sub-role">${agIcon2} ${esc(agLbl2)}</div>
-            <div class="sub-think-toggle" onclick="this.classList.toggle('expanded');this.closest('.msg').querySelector('.sub-think-panel').classList.toggle('open')">
-              思考过程 <span class="arrow">▼</span>
-            </div>
-          </div>
-          <div class="sub-think-panel"><div class="sub-think-body"></div></div>
-          <div class="bubble sub-bubble"><div class="sub-answer-wrap"></div></div>`;
-        $("#chat").appendChild(subDiv);
-        if (!assistant.subBubbles) assistant.subBubbles = {};
-        assistant.subBubbles[ag] = {
-          el: subDiv,
-          thinkBody: subDiv.querySelector(".sub-think-body"),
-          answerWrap: subDiv.querySelector(".sub-answer-wrap"),
-        };
-        subEntry = assistant.subBubbles[ag];
-        scrollChat();
+      // 总编工具: 若气泡已封口(上次@委派), 先开新气泡再挂思考面板
+      if (!ag || ag === "orchestrator") {
+        if (assistant.closed) rotateOrchestratorBubble(assistant);
       }
-      if (ag && ag !== "orchestrator" && subEntry && subEntry.thinkBody) {
-        // 在子 agent 思考面板里添加工具调用条目
-        const div = document.createElement("div");
-        div.className = "st-entry st-tool";
-        div.innerHTML = `<span class="st-dot"></span><span class="st-text">🔧 <b>${esc(toolName)}</b></span>`;
-        subEntry.thinkBody.appendChild(div);
-        // 存引用, 供 observation 事件更新为完成状态
-        subEntry._lastToolEntry = div;
-        scrollChat();
-        break;
-      }
-
-      // ===== 主 agent 工具调用: 原有逻辑 =====
-      const step = { tool: evt.tool, args: evt.args, thinking: evt.thinking || "", agent: ag };
-      assistant.steps.push(step);
-
-      // 群聊式: 总编气泡若已封口, 开新气泡再展示后续步骤
-      if (assistant.closed) {
-        rotateOrchestratorBubble(assistant);
-      }
-      const curBubble = assistant.el;
-
-      // 确保 think-chain 容器存在
-      if (!assistant.chainEl) {
-        assistant.chainEl = document.createElement("div");
-        assistant.chainEl.className = "think-chain";
-        curBubble.appendChild(assistant.chainEl);
-      }
-
-      // 思考已移到顶栏折叠区,气泡里不再显示思考块
-
-      // 执行块
-      const execBlk = document.createElement("div");
-      execBlk.className = "think-block tb-tool";
-      const depthIndent = evt.depth ? `style="margin-left:${evt.depth * 12}px"` : "";
-      execBlk.innerHTML = `<div class="tb-head" ${depthIndent}>
-        <span class="tb-tag exec">执行</span>
-        ${agIcon ? `<span class="tb-title">${agIcon} ${esc(agLbl)} · ${esc(toolName)}</span>` : `<span class="tb-title">${esc(toolName)}</span>`}
-        <span class="tb-status">执行中…</span>
-        <span class="tb-arrow">▼</span>
-      </div>
-      <div class="tb-body">
-        <div class="tb-args">${esc(JSON.stringify(evt.args, null, 2))}</div>
-        <div class="tb-result">⏳ 等待结果…</div>
-      </div>`;
-      assistant.chainEl.appendChild(execBlk);
-      step.execBlk = execBlk;
-      step.resultEl = execBlk.querySelector(".tb-result");
-      step.statusEl = execBlk.querySelector(".tb-status");
-      step.cardEl = execBlk;
+      // thinking 已由 think_*(总编) / sub_think(子agent) 处理, 此处不重复渲染
+      const thinkBody = getThinkBody(assistant, ag);
+      if (!thinkBody) break;
+      const capsule = addToolCapsule(thinkBody, toolName, true);
+      getToolQueue(assistant, ag).push(capsule);
       scrollChat();
       break;
     }
     case "observation": {
+      // 规则5: 工具结果把对应胶囊标记为 ✓ (FIFO 按序消费, 兼容并行工具)
       const ag = evt.agent || "";
-
-      // ===== 子 agent 工具结果: 更新思考面板里的工具条目为完成 =====
-      let subEntry = ag && ag !== "orchestrator" && assistant.subBubbles && assistant.subBubbles[ag];
-      if (subEntry && subEntry._lastToolEntry) {
-        subEntry._lastToolEntry.className = "st-entry st-done";
-        const textEl = subEntry._lastToolEntry.querySelector(".st-text");
-        if (textEl) textEl.innerHTML = textEl.innerHTML.replace("</b>", " ✓</b>");
-        scrollChat();
-        break;
-      }
-
-      // ===== 主 agent 工具结果: 原有逻辑 =====
-      const step = assistant.steps[assistant.steps.length - 1];
-      if (step && step.execBlk) {
-        step.resultEl.innerHTML = prettyResult(evt.result, step.tool);
-        step.statusEl.textContent = "✓ 完成";
-        step.statusEl.style.color = "var(--green)";
-        step.execBlk.classList.remove("tb-tool");
-        step.execBlk.classList.add("tb-done");
-        step.execBlk.classList.add("collapsed");
-      }
+      const q = getToolQueue(assistant, ag);
+      const capsule = q.shift();
+      if (capsule) doneToolCapsule(capsule);
       scrollChat();
       break;
     }

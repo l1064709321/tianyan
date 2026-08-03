@@ -58,7 +58,10 @@ class Settings:
     run_max_duration: int = 600
     # SSE 心跳间隔 (秒). 主 agent 在 LLM/工具调用阻塞期间定期 yield 心跳,
     # 防止前端长时间无数据误判为断连. 0 = 关闭.
-    sse_heartbeat_interval: float = 15.0
+    # ===== 关键修复: 从 15s 降到 5s =====
+    # 原因: Nginx 默认 proxy_read_timeout=60s, Cloudflare 100s, uvicorn timeout_keep_alive=300s
+    # 心跳必须远低于所有中间层超时, 5s 确保任何代理都不会因 idle 掐断
+    sse_heartbeat_interval: float = 5.0
     # 上传小说分块大小 (字符数)
     chunk_size: int = 2000
     chunk_overlap: int = 200

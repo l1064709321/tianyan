@@ -208,9 +208,40 @@ async def chat_sse(pid: str, body: AgentIn):
         agent_name = agents_mod.DEFAULT_AGENT
 
     async def gen():
-        async for evt in run(pid, body.input, agent_name=agent_name):
-            yield evt
-    return StreamingResponse(gen(), media_type="text/event-stream")
+        # ===== 顶层异常捕获: run() 内部任何未捕获异常都在此兜底 =====
+        # 确保后端协程"零崩溃": 异常转为 error 事件发给前端, 连接不中断
+        import traceback as _tb
+        try:
+            async for evt in run(pid, body.input, agent_name=agent_name):
+                yield evt
+        except asyncio.CancelledError:
+            # 客户端主动断开, 正常行为, 不报错
+            pass
+        except Exception as e:
+            _tb.print_exc()
+            # 把异常转为 SSE error 事件, 前端收到后显示错误而非白屏
+            err_payload = {
+                "type": "error",
+                "message": f"内部错误: {e}",
+                "fatal": False,
+                "traceback": _tb.format_exc()[-500:],
+            }
+            yield f"data: {json.dumps(err_payload, ensure_ascii=False)}\n\n"
+            # 确保 done 事件发出, 前端能正常结束 loading 状态
+            yield f'data: {json.dumps({"type": "done", "agent": agent_name, "error": True}, ensure_ascii=False)}\n\n'
+
+    # SSE 必需的响应头: 防止代理缓冲/浏览器缓存导致连接中断
+    sse_headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",          # 禁用 Nginx 反代缓冲
+        "Connection": "keep-alive",
+        "X-Content-Type-Options": "nosniff",
+    }
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers=sse_headers,
+    )
 
 
 # ---------- 多 agent 配置 ----------
@@ -762,7 +793,15 @@ def main() -> None:
     import uvicorn
 
     s = get_settings()
-    uvicorn.run("app.server:app", host=s.server_host, port=s.server_port, reload=False)
+    uvicorn.run(
+        "app.server:app",
+        host=s.server_host,
+        port=s.server_port,
+        reload=False,
+        timeout_keep_alive=600,           # SSE 长连接保活 600s, 远大于任何 LLM 思考时间
+        timeout_graceful_shutdown=30,     # 优雅关闭给 30s 让在途请求完成
+        # 关键: 不设 limit_concurrency, 让 SSE 长连接不占用并发配额
+    )
 
 
 if __name__ == "__main__":

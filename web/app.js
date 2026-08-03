@@ -1170,7 +1170,32 @@ function handleEvent(evt, assistant) {
       }
 
       // ===== 子 agent 工具调用: 路由到子 agent 气泡 =====
-      const subEntry = assistant.subBubbles && assistant.subBubbles[ag];
+      let subEntry = assistant.subBubbles && assistant.subBubbles[ag];
+      // fallback: 如果 sub_agent_start 还没到,自动创建子 agent 气泡
+      if (ag && ag !== "orchestrator" && !subEntry) {
+        const agLbl2 = AGENT_LABELS[ag] || ag;
+        const agIcon2 = AGENT_ICONS[ag] || "👤";
+        const subDiv = document.createElement("div");
+        subDiv.className = `msg sub-agent agent-${ag}`;
+        subDiv.dataset.agent = ag;
+        subDiv.innerHTML = `<div class="role sub-role">${agIcon2} ${esc(agLbl2)}</div>
+          <div class="bubble sub-bubble">
+            <div class="sub-think-wrap" hidden></div>
+            <div class="sub-tool-cards"></div>
+            <div class="sub-answer-wrap"></div>
+          </div>`;
+        $("#chat").appendChild(subDiv);
+        if (!assistant.subBubbles) assistant.subBubbles = {};
+        assistant.subBubbles[ag] = {
+          el: subDiv,
+          thinkWrap: subDiv.querySelector(".sub-think-wrap"),
+          toolCardsWrap: subDiv.querySelector(".sub-tool-cards"),
+          answerWrap: subDiv.querySelector(".sub-answer-wrap"),
+          toolCards: {},
+        };
+        subEntry = assistant.subBubbles[ag];
+        scrollChat();
+      }
       if (ag && ag !== "orchestrator" && subEntry && subEntry.toolCardsWrap) {
         // 在子 agent 气泡内创建工具调用卡片
         const card = document.createElement("div");
@@ -1260,7 +1285,7 @@ function handleEvent(evt, assistant) {
       const ag = evt.agent || "";
 
       // ===== 子 agent 工具结果: 路由到子 agent 工具卡片 =====
-      const subEntry = ag && ag !== "orchestrator" && assistant.subBubbles && assistant.subBubbles[ag];
+      let subEntry = ag && ag !== "orchestrator" && assistant.subBubbles && assistant.subBubbles[ag];
       if (subEntry && subEntry._activeToolId && subEntry.toolCards[subEntry._activeToolId]) {
         const tc = subEntry.toolCards[subEntry._activeToolId];
         tc.resultEl.innerHTML = prettyResult(evt.result, tc.tool);

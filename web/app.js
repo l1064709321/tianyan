@@ -888,7 +888,7 @@ function handleEvent(evt, assistant) {
         assistant.curThinkStatus.className = `tb-status ${feasible ? "ok" : "no"}`;
         // 判断区
         const planHtml = plan.length
-          ? `<div class="tb-plan">计划: ${plan.map((p) => `<span class="tb-plan-item">${esc(p)}</span>`).join(" → ")}</div>`
+          ? `<div class="tb-plan">${plan.map((p) => `<span class="tb-plan-item">${esc(p)}</span>`).join("<span class=\"tb-plan-arrow\">→</span>")}</div>`
           : "";
         const missingHtml = missing ? `<div class="tb-missing">⚠ 缺少: ${esc(missing)}</div>` : "";
         assistant.curThinkJudge.hidden = false;
@@ -960,7 +960,6 @@ function handleEvent(evt, assistant) {
     }
     case "sub_agent_start": {
       // 群聊式: 专家 agent 开始独立发言, 建独立聊天气泡
-      console.log("[群聊] sub_agent_start 事件收到:", evt);
       const ag = evt.agent || "";
       const agLbl = AGENT_LABELS[ag] || ag;
       const agIcon = AGENT_ICONS[ag] || "👤";
@@ -977,17 +976,20 @@ function handleEvent(evt, assistant) {
       subDiv.dataset.agent = ag;
       subDiv.innerHTML = `<div class="role sub-role">${agIcon} ${esc(agLbl)}</div>
         <div class="bubble sub-bubble">
-          ${task ? `<div class="sub-task">📦 接到任务：${esc(task.slice(0, 200))}${task.length > 200 ? "…" : ""}</div>` : ""}
+          ${task ? `<div class="sub-task"><div class="sub-task-label">📦 接到任务</div>${esc(task.slice(0, 300))}${task.length > 300 ? "…" : ""}</div>` : ""}
           <div class="sub-think-wrap" hidden></div>
+          <div class="sub-tool-cards"></div>
           <div class="sub-answer-wrap"></div>
         </div>`;
       $("#chat").appendChild(subDiv);
-      // 缓存到 assistant 上, 供后续 sub_think/sub_answer 填充
+      // 缓存到 assistant 上, 供后续 sub_think/sub_answer/sub_tool 填充
       if (!assistant.subBubbles) assistant.subBubbles = {};
       assistant.subBubbles[ag] = {
         el: subDiv,
         thinkWrap: subDiv.querySelector(".sub-think-wrap"),
+        toolCardsWrap: subDiv.querySelector(".sub-tool-cards"),
         answerWrap: subDiv.querySelector(".sub-answer-wrap"),
+        toolCards: {},  // tool call id → card DOM element
       };
       scrollChat();
       break;
@@ -1002,7 +1004,20 @@ function handleEvent(evt, assistant) {
       let wrap = entry.thinkWrap;
       if (wrap.hidden) {
         wrap.hidden = false;
-        wrap.innerHTML = `<div class="sub-think-label">💭 思考过程</div><div class="sub-think-body"></div>`;
+        wrap.innerHTML = `<div class="sub-think-label collapsible">💭 思考过程 <span style="font-size:10px;opacity:.6">▼</span></div><div class="sub-think-body"></div>`;
+        // 点击折叠/展开
+        const lbl = wrap.querySelector(".sub-think-label");
+        lbl.onclick = () => {
+          const body = wrap.querySelector(".sub-think-body");
+          const arrow = lbl.querySelector("span");
+          if (body.hidden) {
+            body.hidden = false;
+            if (arrow) arrow.textContent = "▼";
+          } else {
+            body.hidden = true;
+            if (arrow) arrow.textContent = "▶";
+          }
+        };
       }
       let body = wrap.querySelector(".sub-think-body");
       if (!body) {
@@ -1025,11 +1040,21 @@ function handleEvent(evt, assistant) {
       if (!entry.thinkWrap.hidden) {
         const lbl = entry.thinkWrap.querySelector(".sub-think-label");
         if (lbl) {
-          lbl.textContent = "💭 思考过程 (已完成, 点击折叠)";
+          lbl.innerHTML = "💭 思考过程 <span style=\"font-size:10px;opacity:.6\">▶</span>";
           lbl.classList.add("collapsible");
+          // 默认折叠思考区
+          const body = entry.thinkWrap.querySelector(".sub-think-body");
+          if (body) body.hidden = true;
           lbl.onclick = () => {
             const body = entry.thinkWrap.querySelector(".sub-think-body");
-            if (body) body.hidden = !body.hidden;
+            const arrow = lbl.querySelector("span");
+            if (body.hidden) {
+              body.hidden = false;
+              if (arrow) arrow.textContent = "▼";
+            } else {
+              body.hidden = true;
+              if (arrow) arrow.textContent = "▶";
+            }
           };
         }
       }
@@ -1120,10 +1145,9 @@ function handleEvent(evt, assistant) {
       const ag = evt.agent || "";
       const agLbl = ag ? (AGENT_LABELS[ag] || ag) : "";
       const agIcon = ag ? (AGENT_ICONS[ag] || "") : "";
-      const step = { tool: evt.tool, args: evt.args, thinking: evt.thinking || "", agent: ag };
-      assistant.steps.push(step);
+      const toolName = cnTool(evt.tool || "");
 
-      // 思考过程: 左侧面板
+      // 左侧面板: 思考过程
       if (evt.thinking) {
         const agTag = agIcon ? `${agIcon} ${esc(agLbl)}` : "";
         appendThink(`<div class="tp-entry tp-think">
@@ -1132,29 +1156,61 @@ function handleEvent(evt, assistant) {
         </div>`);
       }
 
-      // 工具调用: 左侧面板 (紧凑条目)
-      const toolName = cnTool(evt.tool || "");
-      appendThink(`<div class="tp-entry tp-tool" data-toolstep="${assistant.steps.length - 1}">
+      // 左侧面板: 工具调用条目
+      appendThink(`<div class="tp-entry tp-tool">
         <span class="tp-dot"></span>
         ${agIcon ? `<span class="tp-icon">${agIcon}</span>` : ""}
         <span class="tp-text"><span class="tp-label tool">调用</span> <b>${esc(toolName)}</b>${agIcon ? " · " + esc(agLbl) : ""}</span>
       </div>`);
 
-      // 群聊式: delegate_to_agent 工具的展示由 delegate 事件负责, 此处跳过执行块
+      // delegate_to_agent 工具的展示由 delegate 事件负责, 此处跳过
       if (evt.tool === "delegate_to_agent") {
         scrollChat();
         break;
       }
 
+      // ===== 子 agent 工具调用: 路由到子 agent 气泡 =====
+      const subEntry = assistant.subBubbles && assistant.subBubbles[ag];
+      if (ag && ag !== "orchestrator" && subEntry && subEntry.toolCardsWrap) {
+        // 在子 agent 气泡内创建工具调用卡片
+        const card = document.createElement("div");
+        card.className = "sub-tool-card";
+        card.innerHTML = `<div class="stc-head">
+          <span class="stc-icon">🔧</span>
+          <span class="stc-name">${esc(toolName)}</span>
+          <span class="stc-status">执行中…</span>
+        </div>
+        <div class="stc-body">
+          <div class="stc-args">${esc(JSON.stringify(evt.args, null, 2))}</div>
+          <div class="stc-result">⏳ 等待结果…</div>
+        </div>`;
+        // 点击折叠/展开
+        card.querySelector(".stc-head").onclick = () => card.classList.toggle("collapsed");
+        subEntry.toolCardsWrap.appendChild(card);
+        // 存引用, 供 observation 事件更新
+        const tcId = `${ag}_step_${Object.keys(subEntry.toolCards).length}`;
+        subEntry.toolCards[tcId] = {
+          card,
+          resultEl: card.querySelector(".stc-result"),
+          statusEl: card.querySelector(".stc-status"),
+          tool: evt.tool,
+        };
+        // 标记当前活跃 tool card id (供 observation 匹配)
+        subEntry._activeToolId = tcId;
+        scrollChat();
+        break;
+      }
+
+      // ===== 主 agent 工具调用: 原有逻辑 =====
+      const step = { tool: evt.tool, args: evt.args, thinking: evt.thinking || "", agent: ag };
+      assistant.steps.push(step);
+
       // 群聊式: 总编气泡若已封口, 开新气泡再展示后续步骤
       if (assistant.closed) {
         rotateOrchestratorBubble(assistant);
       }
-      // 重新取 bubble 引用 (可能已轮转)
       const curBubble = assistant.el;
 
-      // 右侧: 用 think-block (无框, 不可复制, 可折叠) 替代旧 step-card
-      // 两段式: 思考块 (如有 thinking) + 执行块
       // 确保 think-chain 容器存在
       if (!assistant.chainEl) {
         assistant.chainEl = document.createElement("div");
@@ -1162,7 +1218,7 @@ function handleEvent(evt, assistant) {
         curBubble.appendChild(assistant.chainEl);
       }
 
-      // 思考块: 打草稿/推理 (先于执行展示, 体现"先思考再行动")
+      // 思考块
       if (evt.thinking) {
         const thinkBlk = document.createElement("div");
         thinkBlk.className = "think-block tb-think collapsed";
@@ -1178,7 +1234,7 @@ function handleEvent(evt, assistant) {
         assistant.chainEl.appendChild(thinkBlk);
       }
 
-      // 执行块: 工具调用 (默认展开, 完成后收起)
+      // 执行块
       const execBlk = document.createElement("div");
       execBlk.className = "think-block tb-tool";
       const depthIndent = evt.depth ? `style="margin-left:${evt.depth * 12}px"` : "";
@@ -1201,6 +1257,22 @@ function handleEvent(evt, assistant) {
       break;
     }
     case "observation": {
+      const ag = evt.agent || "";
+
+      // ===== 子 agent 工具结果: 路由到子 agent 工具卡片 =====
+      const subEntry = ag && ag !== "orchestrator" && assistant.subBubbles && assistant.subBubbles[ag];
+      if (subEntry && subEntry._activeToolId && subEntry.toolCards[subEntry._activeToolId]) {
+        const tc = subEntry.toolCards[subEntry._activeToolId];
+        tc.resultEl.innerHTML = prettyResult(evt.result, tc.tool);
+        tc.statusEl.textContent = "✓ 完成";
+        tc.statusEl.className = "stc-status done";
+        tc.card.classList.add("sub-tool-done");
+        tc.card.classList.add("collapsed"); // 完成后自动收起
+        scrollChat();
+        break;
+      }
+
+      // ===== 主 agent 工具结果: 原有逻辑 =====
       const step = assistant.steps[assistant.steps.length - 1];
       if (step && step.execBlk) {
         step.resultEl.innerHTML = prettyResult(evt.result, step.tool);
@@ -1208,14 +1280,7 @@ function handleEvent(evt, assistant) {
         step.statusEl.style.color = "var(--green)";
         step.execBlk.classList.remove("tb-tool");
         step.execBlk.classList.add("tb-done");
-        step.execBlk.classList.add("collapsed"); // 完成后自动收起
-
-        // 左侧面板: 标记对应工具条目为完成
-        const tpTool = $(`#tp-stream [data-toolstep="${assistant.steps.length - 1}"]`);
-        if (tpTool) {
-          tpTool.classList.add("tp-done");
-          tpTool.querySelector(".tp-dot").style.background = "var(--green)";
-        }
+        step.execBlk.classList.add("collapsed");
       }
       scrollChat();
       break;

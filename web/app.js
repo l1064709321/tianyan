@@ -784,42 +784,71 @@ async function send(text) {
   }
 }
 
-// ============ 左侧思考面板 ============
+// ============ 顶栏思考折叠条 ============
 function showThinkPanel() {
-  const tree = $("#tree");
-  const panel = $("#think-panel");
-  const stream = $("#tp-stream");
-  if (tree) tree.classList.add("hidden");
-  if (panel) panel.classList.remove("hidden");
-  // 重置
+  const bar = $("#think-bar");
+  const detail = $("#think-detail");
+  const stream = $("#think-detail-stream");
+  if (bar) bar.classList.remove("hidden");
+  if (detail) { detail.classList.remove("open"); detail.classList.add("hidden"); }
+  if (bar) bar.classList.remove("expanded");
   if (stream) {
-    stream.innerHTML = `<div class="tp-entry tp-loading">
-      <span class="tp-dot"></span>
-      <span class="tp-text">正在思考<span class="thinking-dots"></span></span>
+    stream.innerHTML = `<div class="td-entry td-think">
+      <span class="td-dot"></span>
+      <span class="td-text">正在思考<span class="thinking-dots"></span></span>
     </div>`;
+  }
+  // 点击展开/折叠
+  if (bar && !bar._bound) {
+    bar._bound = true;
+    $("#think-bar-btn").onclick = () => {
+      const d = $("#think-detail");
+      if (d.classList.contains("open")) {
+        d.classList.remove("open");
+        bar.classList.remove("expanded");
+        setTimeout(() => d.classList.add("hidden"), 300);
+      } else {
+        d.classList.remove("hidden");
+        requestAnimationFrame(() => d.classList.add("open"));
+        bar.classList.add("expanded");
+      }
+    };
   }
 }
 
 function hideThinkPanel() {
-  const tree = $("#tree");
-  const panel = $("#think-panel");
-  if (tree) tree.classList.remove("hidden");
-  if (panel) panel.classList.add("hidden");
+  const bar = $("#think-bar");
+  const detail = $("#think-detail");
+  if (bar) bar.classList.add("hidden");
+  if (detail) { detail.classList.remove("open"); detail.classList.add("hidden"); }
 }
 
 function removeThinkLoading() {
-  const loading = $("#tp-stream .tp-loading");
-  if (loading) loading.remove();
+  const stream = $("#think-detail-stream");
+  if (!stream) return;
+  const loading = stream.querySelector(".td-entry.td-think");
+  // 只移除 "正在思考" 的加载条目 (保留其他)
+  if (loading && loading.textContent.includes("正在思考")) loading.remove();
 }
 
 function appendThink(html) {
   removeThinkLoading();
-  const stream = $("#tp-stream");
+  const stream = $("#think-detail-stream");
   if (!stream) return;
   const div = document.createElement("div");
   div.innerHTML = html;
-  stream.appendChild(div.firstElementChild);
-  stream.scrollTop = stream.scrollHeight;
+  if (div.firstElementChild) {
+    stream.appendChild(div.firstElementChild);
+    stream.scrollTop = stream.scrollHeight;
+  }
+  // 更新顶栏摘要
+  const barText = $("#think-bar-text");
+  if (barText) {
+    const count = stream.children.length;
+    const lastEntry = stream.lastElementChild;
+    const text = lastEntry ? lastEntry.textContent.slice(0, 30) : "";
+    barText.textContent = `思考中 · ${count}步 · ${text}${text.length >= 30 ? "…" : ""}`;
+  }
 }
 
 function handleEvent(evt, assistant) {
@@ -837,80 +866,49 @@ function handleEvent(evt, assistant) {
       break;
     }
     case "think_start": {
-      // 开始一个思考块: 默认展开, 准备接收 think_token 逐字填充
-      if (!assistant.chainEl) {
-        assistant.chainEl = document.createElement("div");
-        assistant.chainEl.className = "think-chain";
-        bubble.appendChild(assistant.chainEl);
-      }
+      // 思考开始: 在顶栏折叠区创建流式条目 (不在气泡里)
       const round = evt.round || 1;
-      const tBlk = document.createElement("div");
-      tBlk.className = "think-block tb-think tb-streaming";
-      tBlk.innerHTML = `<div class="tb-head">
-        <span class="tb-tag think">思考·轮${round}</span>
-        <span class="tb-status thinking">思考中…</span>
-        <span class="tb-arrow">▼</span>
-      </div>
-      <div class="tb-body">
-        <div class="tb-think-text"></div>
-        <div class="tb-judge" hidden></div>
-      </div>`;
-      assistant.chainEl.appendChild(tBlk);
-      assistant.curThinkBlk = tBlk;
-      assistant.curThinkText = tBlk.querySelector(".tb-think-text");
-      assistant.curThinkStatus = tBlk.querySelector(".tb-status");
-      assistant.curThinkJudge = tBlk.querySelector(".tb-judge");
-      // 左侧面板同步
-      appendThink(`<div class="tp-entry tp-think" data-thinkround="${round}">
-        <span class="tp-dot"></span>
-        <span class="tp-text"><b>思考·轮${round}</b> <span class="thinking-dots"></span></span>
-      </div>`);
-      scrollChat();
+      const stream = $("#think-detail-stream");
+      if (stream) {
+        const entry = document.createElement("div");
+        entry.className = "td-entry td-think";
+        entry.dataset.thinkround = round;
+        entry.innerHTML = `<span class="td-dot"></span><span class="td-text"><b>轮${round}</b> <span class="td-think-content"></span><span class="thinking-dots"></span></span>`;
+        stream.appendChild(entry);
+        stream.scrollTop = stream.scrollHeight;
+        assistant.curThinkEntry = entry;
+        assistant.curThinkContent = entry.querySelector(".td-think-content");
+      }
       break;
     }
     case "think_token": {
-      // 逐字追加到当前思考块 (打字机效果)
-      if (assistant.curThinkText && evt.text) {
-        assistant.curThinkText.appendChild(document.createTextNode(evt.text));
-        scrollChat();
+      // 逐字追加到顶栏折叠区的思考条目
+      if (assistant.curThinkContent && evt.text) {
+        assistant.curThinkContent.appendChild(document.createTextNode(evt.text));
       }
       break;
     }
     case "think_end": {
-      // 思考结束: 显示判断结果, 自动折叠
-      if (assistant.curThinkBlk) {
-        const feasible = evt.feasible;
-        const reason = evt.reason || "";
-        const missing = evt.missing || "";
-        const plan = evt.plan || [];
-        // 状态标签
-        assistant.curThinkStatus.textContent = feasible ? "✓ 可行" : "✗ 不可行";
-        assistant.curThinkStatus.className = `tb-status ${feasible ? "ok" : "no"}`;
-        // 判断区
-        const planHtml = plan.length
-          ? `<div class="tb-plan">${plan.map((p) => `<span class="tb-plan-item">${esc(p)}</span>`).join("<span class=\"tb-plan-arrow\">→</span>")}</div>`
-          : "";
-        const missingHtml = missing ? `<div class="tb-missing">⚠ 缺少: ${esc(missing)}</div>` : "";
-        assistant.curThinkJudge.hidden = false;
-        assistant.curThinkJudge.innerHTML = `<div class="tb-reason">${esc(reason)}</div>${planHtml}${missingHtml}`;
-        // 不可行变红
-        if (!feasible) assistant.curThinkBlk.classList.add("tb-reject");
-        // 自动折叠 (思考完毕)
-        assistant.curThinkBlk.classList.remove("tb-streaming");
-        assistant.curThinkBlk.classList.add("collapsed");
-        // 左侧面板更新
-        const tp = $(`#tp-stream [data-thinkround="${evt.round || 1}"]`);
-        if (tp) {
-          tp.querySelector(".tp-text").innerHTML = `<b>思考·轮${evt.round || 1}</b> ${feasible ? "✓可执行" : "✗需重新思考"}：${esc(reason)}`;
-          tp.querySelector(".tp-dot").style.background = feasible ? "var(--green)" : "var(--red)";
+      // 思考结束: 更新顶栏折叠区条目
+      const feasible = evt.feasible;
+      const reason = evt.reason || "";
+      const missing = evt.missing || "";
+      const plan = evt.plan || [];
+      if (assistant.curThinkEntry) {
+        const dots = assistant.curThinkEntry.querySelector(".thinking-dots");
+        if (dots) dots.remove();
+        const text = assistant.curThinkEntry.querySelector(".td-text");
+        if (text) {
+          const planStr = plan.length ? ` → ${plan.join(" → ")}` : "";
+          const missStr = missing ? ` ⚠缺: ${missing}` : "";
+          text.innerHTML = `<b>轮${evt.round || 1}</b> ${feasible ? "✓" : "✗"} ${esc(reason)}${planStr}${missStr}`;
         }
-        // 清理引用
-        assistant.curThinkBlk = null;
-        assistant.curThinkText = null;
-        assistant.curThinkStatus = null;
-        assistant.curThinkJudge = null;
+        assistant.curThinkEntry.className = `td-entry ${feasible ? "td-done" : "td-error"}`;
       }
-      scrollChat();
+      const barText = $("#think-bar-text");
+      if (barText) barText.textContent = `思考完成 · ${feasible ? "可行" : "不可行"} · ${esc(reason.slice(0, 20))}`;
+      assistant.curThinkEntry = null;
+      assistant.curThinkContent = null;
       break;
     }
     case "delegate": {
@@ -923,9 +921,9 @@ function handleEvent(evt, assistant) {
       const task = evt.task || "";
 
       // 左侧思考面板: 简洁条目
-      appendThink(`<div class="tp-entry tp-delegate">
-        <span class="tp-icon">${toIcon}</span>
-        <span class="tp-text"><span class="tp-label delegate">委派</span> → <b>${toLbl}</b>${task ? "：" + esc(task.slice(0, 60)) : ""}</span>
+      appendThink(`<div class="td-entry td-delegate">
+        <span class="td-icon">${toIcon}</span>
+        <span class="td-text"><span class="td-tag delegate">委派</span> → <b>${toLbl}</b>${task ? "：" + esc(task.slice(0, 60)) : ""}</span>
       </div>`);
 
       // 群聊式: 若上一轮总编气泡已封口, 先开新气泡再发言 (每次@拍一拍都是独立气泡)
@@ -950,9 +948,9 @@ function handleEvent(evt, assistant) {
       const toLbl = AGENT_LABELS[evt.to] || evt.to;
       const toIcon = AGENT_ICONS[evt.to] || "↪";
       const dur = evt.duration_ms ? `${(evt.duration_ms / 1000).toFixed(1)}s` : "";
-      appendThink(`<div class="tp-entry tp-delegate-done">
-        <span class="tp-icon">${toIcon}</span>
-        <span class="tp-text"><span class="tp-label done">完成</span> <b>${toLbl}</b> ${dur ? `· ${dur}` : ""}</span>
+      appendThink(`<div class="td-entry td-delegate-done">
+        <span class="td-icon">${toIcon}</span>
+        <span class="td-text"><span class="td-tag done">完成</span> <b>${toLbl}</b> ${dur ? `· ${dur}` : ""}</span>
       </div>`);
       if (evt.to) updateActiveAgent(evt.from || "orchestrator");
       scrollChat();
@@ -966,9 +964,9 @@ function handleEvent(evt, assistant) {
       const task = evt.task || "";
       if (ag) updateActiveAgent(ag);
       // 左侧思考面板: 标记专家开始
-      appendThink(`<div class="tp-entry tp-sub-start">
-        <span class="tp-icon">${agIcon}</span>
-        <span class="tp-text"><span class="tp-label sub">发言</span> <b>${esc(agLbl)}</b>${task ? "：" + esc(task.slice(0, 50)) : ""}</span>
+      appendThink(`<div class="td-entry td-sub-start">
+        <span class="td-icon">${agIcon}</span>
+        <span class="td-text"><span class="td-tag sub">发言</span> <b>${esc(agLbl)}</b>${task ? "：" + esc(task.slice(0, 50)) : ""}</span>
       </div>`);
       // 主对话区: 建专家独立气泡
       const subDiv = document.createElement("div");
@@ -1076,9 +1074,9 @@ function handleEvent(evt, assistant) {
           entry.answerWrap.innerHTML += `<div class="sub-truncated">⚠ 步数用尽, 任务未完全完成</div>`;
         }
       }
-      appendThink(`<div class="tp-entry tp-sub-done">
-        <span class="tp-icon">${agIcon}</span>
-        <span class="tp-text"><span class="tp-label done">发言结束</span> <b>${esc(agLbl)}</b>${truncated ? " · 步数用尽" : ""}</span>
+      appendThink(`<div class="td-entry td-sub-done">
+        <span class="td-icon">${agIcon}</span>
+        <span class="td-text"><span class="td-tag done">发言结束</span> <b>${esc(agLbl)}</b>${truncated ? " · 步数用尽" : ""}</span>
       </div>`);
       // 活跃 agent 切回总编
       updateActiveAgent("orchestrator");
@@ -1093,9 +1091,9 @@ function handleEvent(evt, assistant) {
         entry.el.classList.add("sub-error");
         entry.answerWrap.innerHTML = `<div class="sub-error-msg">❌ 调用失败: ${esc(evt.error || "")}</div>`;
       }
-      appendThink(`<div class="tp-entry tp-sub-error">
-        <span class="tp-icon">⚠</span>
-        <span class="tp-text"><b>${esc(agLbl)}</b> 调用失败</span>
+      appendThink(`<div class="td-entry td-sub-error">
+        <span class="td-icon">⚠</span>
+        <span class="td-text"><b>${esc(agLbl)}</b> 调用失败</span>
       </div>`);
       scrollChat();
       break;
@@ -1109,9 +1107,9 @@ function handleEvent(evt, assistant) {
       const agIcon = AGENT_ICONS[evt.agent] || "🎯";
 
       // 左侧思考面板
-      appendThink(`<div class="tp-entry tp-review ${pass ? "" : "reject"}">
-        <span class="tp-icon">${agIcon}</span>
-        <span class="tp-text"><span class="tp-label ${pass ? "ok" : "no"}">${pass ? "验收通过" : "验收打回"}</span> ${esc(verdict.slice(0, 80))}</span>
+      appendThink(`<div class="td-entry td-review ${pass ? "" : "reject"}">
+        <span class="td-icon">${agIcon}</span>
+        <span class="td-text"><span class="td-tag ${pass ? "ok" : "no"}">${pass ? "验收通过" : "验收打回"}</span> ${esc(verdict.slice(0, 80))}</span>
       </div>`);
 
       // 群聊式: 总编气泡若已封口, 开新气泡展示验收
@@ -1150,17 +1148,17 @@ function handleEvent(evt, assistant) {
       // 左侧面板: 思考过程
       if (evt.thinking) {
         const agTag = agIcon ? `${agIcon} ${esc(agLbl)}` : "";
-        appendThink(`<div class="tp-entry tp-think">
-          <span class="tp-dot"></span>
-          <span class="tp-text">${agTag ? `<b>${agTag}</b>：` : ""}${esc(evt.thinking)}</span>
+        appendThink(`<div class="td-entry td-think">
+          <span class="td-dot"></span>
+          <span class="td-text">${agTag ? `<b>${agTag}</b>：` : ""}${esc(evt.thinking)}</span>
         </div>`);
       }
 
       // 左侧面板: 工具调用条目
-      appendThink(`<div class="tp-entry tp-tool">
-        <span class="tp-dot"></span>
-        ${agIcon ? `<span class="tp-icon">${agIcon}</span>` : ""}
-        <span class="tp-text"><span class="tp-label tool">调用</span> <b>${esc(toolName)}</b>${agIcon ? " · " + esc(agLbl) : ""}</span>
+      appendThink(`<div class="td-entry td-tool">
+        <span class="td-dot"></span>
+        ${agIcon ? `<span class="td-icon">${agIcon}</span>` : ""}
+        <span class="td-text"><span class="td-tag tool">调用</span> <b>${esc(toolName)}</b>${agIcon ? " · " + esc(agLbl) : ""}</span>
       </div>`);
 
       // delegate_to_agent 工具的展示由 delegate 事件负责, 此处跳过
@@ -1243,21 +1241,7 @@ function handleEvent(evt, assistant) {
         curBubble.appendChild(assistant.chainEl);
       }
 
-      // 思考块
-      if (evt.thinking) {
-        const thinkBlk = document.createElement("div");
-        thinkBlk.className = "think-block tb-think collapsed";
-        const agTag = agIcon ? `${agIcon} ${esc(agLbl)} ` : "";
-        thinkBlk.innerHTML = `<div class="tb-head">
-          <span class="tb-tag think">思考</span>
-          <span class="tb-title">${agTag}推理步骤</span>
-          <span class="tb-arrow">▼</span>
-        </div>
-        <div class="tb-body">
-          <div class="tb-think-text">${esc(evt.thinking)}</div>
-        </div>`;
-        assistant.chainEl.appendChild(thinkBlk);
-      }
+      // 思考已移到顶栏折叠区,气泡里不再显示思考块
 
       // 执行块
       const execBlk = document.createElement("div");
@@ -1359,9 +1343,9 @@ function handleEvent(evt, assistant) {
       const isApiKeyErr = errMsg.includes("API Key") || errMsg.includes("api_key") || errMsg.includes("Missing credentials");
       const isLoop = evt.reason === "loop_detected" || errMsg.includes("超限") || errMsg.includes("卡循环");
       // 左侧面板也显示错误
-      appendThink(`<div class="tp-entry tp-error">
-        <span class="tp-dot"></span>
-        <span class="tp-text"><span class="tp-label error">错误</span> ${esc(errMsg)}</span>
+      appendThink(`<div class="td-entry td-error">
+        <span class="td-dot"></span>
+        <span class="td-text"><span class="td-tag error">错误</span> ${esc(errMsg)}</span>
       </div>`);
       if (isApiKeyErr) {
         bubble.innerHTML += `<div class="err err-apikey">
@@ -1391,8 +1375,8 @@ function handleEvent(evt, assistant) {
     case "done":
       removeThinkLoading();
       // 左侧面板: 完成徽章
-      appendThink(`<div class="tp-done-badge">
-        <span class="tp-done-icon">✓</span> 完成 · ${evt.steps} 步
+      appendThink(`<div class="td-done-badge">
+        <span class="td-done-icon">✓</span> 完成 · ${evt.steps} 步
         ${evt.stats ? ` · ${evt.stats.chapters}章/${evt.stats.total_chars}字` : ""}
       </div>`);
       // 1.5 秒后恢复文件树

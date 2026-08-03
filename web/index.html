@@ -63,6 +63,14 @@
       <div class="proj-info" id="proj-info">未选择项目</div>
       <div class="status" id="status-bar"></div>
       <span id="run-elapsed" class="run-elapsed" hidden></span>
+      <!-- 思考折叠条 (顶栏右侧,点击展开/折叠) -->
+      <div class="think-bar hidden" id="think-bar">
+        <button class="think-bar-btn" id="think-bar-btn">
+          <span class="think-bar-icon">🧠</span>
+          <span class="think-bar-text" id="think-bar-text">思考中…</span>
+          <span class="think-bar-arrow" id="think-bar-arrow">▼</span>
+        </button>
+      </div>
       <div class="actions">
         <div class="dropdown">
           <button class="btn ghost" id="export-btn">导出 ▾</button>
@@ -92,6 +100,11 @@
         </button>
       </div>
     </header>
+
+    <!-- 思考详情面板 (顶栏下方,默认隐藏,点击think-bar展开) -->
+    <div class="think-detail hidden" id="think-detail">
+      <div class="think-detail-stream" id="think-detail-stream"></div>
+    </div>
 
     <div class="chat" id="chat">
       <div class="empty" id="empty-state">

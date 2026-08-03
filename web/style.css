@@ -1093,3 +1093,48 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
   transition:height .2s}
 .dr-bar.has-cache{background:var(--blue)}
 .dr-bar-idx{font-size:10px;color:var(--muted);font-family:var(--sans)}
+
+/* ============ 顶栏思考折叠条 + 详情面板 ============ */
+.think-bar{display:inline-flex;align-items:center;margin-left:8px}
+.think-bar.hidden{display:none}
+.think-bar-btn{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;
+  background:linear-gradient(135deg,rgba(61,107,139,.08),rgba(90,107,63,.06));
+  border:1px solid var(--border);border-radius:14px;cursor:pointer;
+  font-size:11.5px;font-family:var(--sans);color:var(--ink2);transition:.15s;
+  white-space:nowrap}
+.think-bar-btn:hover{background:var(--paper3);border-color:var(--border2)}
+.think-bar-icon{font-size:13px}
+.think-bar-text{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.think-bar-arrow{font-size:9px;color:var(--muted);transition:transform .2s}
+.think-bar.expanded .think-bar-arrow{transform:rotate(180deg)}
+/* 思考详情面板 */
+.think-detail{background:var(--paper2);border-bottom:1px solid var(--border);
+  max-height:0;overflow:hidden;transition:max-height .3s ease;max-width:820px;
+  margin:0 auto;width:100%}
+.think-detail.open{max-height:400px;overflow-y:auto}
+.think-detail-stream{padding:10px 14px;display:flex;flex-direction:column;gap:4px}
+/* 思考条目 (紧凑) */
+.td-entry{display:flex;align-items:flex-start;gap:8px;padding:5px 8px;
+  border-radius:var(--radius-sm);font-size:11.5px;line-height:1.5;
+  font-family:var(--sans);border-left:2px solid transparent}
+.td-entry.td-think{border-left-color:var(--blue);background:rgba(61,107,139,.03)}
+.td-entry.td-tool{border-left-color:var(--yellow);background:rgba(154,107,31,.02)}
+.td-entry.td-done{border-left-color:var(--green);background:rgba(90,107,63,.02)}
+.td-entry.td-error{border-left-color:var(--red);background:rgba(161,61,61,.03)}
+.td-entry.td-delegate{border-left-color:var(--blue);background:rgba(61,107,139,.03)}
+.td-dot{width:5px;height:5px;border-radius:50%;margin-top:6px;flex-shrink:0;
+  background:var(--accent);opacity:.6}
+.td-entry.td-done .td-dot{background:var(--green);opacity:.8}
+.td-entry.td-tool .td-dot{background:var(--yellow)}
+.td-entry.td-delegate .td-dot{background:var(--blue)}
+.td-text{flex:1;word-break:break-word;color:var(--ink2);font-size:11.5px}
+.td-text b{color:var(--ink);font-weight:600}
+.td-tag{font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;margin-right:4px}
+.td-tag.think{background:rgba(61,107,139,.1);color:var(--blue)}
+.td-tag.tool{background:rgba(154,107,31,.1);color:var(--yellow)}
+.td-tag.delegate{background:rgba(61,107,139,.1);color:var(--blue)}
+.td-tag.done{background:rgba(90,107,63,.1);color:var(--green)}
+.td-tag.error{background:rgba(161,61,61,.1);color:var(--red)}
+.td-done-badge{display:flex;align-items:center;gap:6px;padding:6px 8px;
+  border-radius:var(--radius-sm);background:rgba(90,107,63,.05);
+  border:1px solid rgba(90,107,63,.15);font-size:11.5px;color:var(--green);font-weight:600}

@@ -987,13 +987,13 @@ TOOL_SCHEMA: list[dict] = [
         "type": "function",
         "function": {
             "name": "delegate_to_agent",
-            "description": "把任务委派给专家 agent 协同完成 (oh-story 7-agent 架构)。"
-            "可用 agent:story-architect(架构师/选题大纲钩子反转)/"
-            "narrative-writer(主笔/正文润色去AI味)/"
-            "character-designer(角色师/角色档案对话关系)/"
-            "consistency-checker(质检员/只读一致性检查)/"
-            "story-explorer(资料员/只读上下文加载)/"
-            "worldbuilder(设定管理员/地点世界观时间线)。"
+            "description": "把任务委派给专家 agent 协同完成 (天衍 7-agent 架构)。"
+            "可用 agent:story-architect(2号架构师/选题大纲世界观DB里程碑)/"
+            "narrative-writer(3号主笔/正文润色去AI味)/"
+            "character-designer(4号角色师/角色档案对话关系)/"
+            "consistency-checker(5号质检员/只读四重校验)/"
+            "story-explorer(6号资料员/只读上下文加载风格缓存)/"
+            "presenter(7号监制/只读交付报告)。"
             "子 agent 会独立运行 agentic loop 并返回结果。",
             "parameters": {
                 "type": "object",
@@ -1001,7 +1001,7 @@ TOOL_SCHEMA: list[dict] = [
                     "agent": {"type": "string",
                               "enum": ["story-architect", "narrative-writer",
                                        "character-designer", "consistency-checker",
-                                       "story-explorer", "worldbuilder"],
+                                       "story-explorer", "presenter"],
                               "description": "目标专家 agent 名称。参数名必须用 'agent'(不要用 agent_name/agent_role/target),值为枚举之一"},
                     "task": {"type": "string", "description": "委派给该 agent 的具体任务描述。参数名必须用 'task'(不要用 prompt/instruction)"},
                 },
@@ -1384,6 +1384,125 @@ TOOL_SCHEMA: list[dict] = [
             },
         },
     },
+    # === 新架构: 7-agent 协作工具集 ===
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_character",
+            "description": "角色档案管理:创建/更新/查询角色独立档案(性格基调/说话风格/行为逻辑/动机/弧光)。4号角色师专用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["create", "update", "query", "list"],
+                               "description": "create/update=新建或更新档案(name 唯一);query=按名查询;list=列出项目全部档案"},
+                    "name": {"type": "string", "description": "角色名 (action=create/update/query 必填)"},
+                    "role": {"type": "string", "description": "角色定位(主角/配角/反派/...)"},
+                    "personality": {"type": "string", "description": "性格基调(冷峻/活泼/阴郁...)"},
+                    "speech_style": {"type": "string", "description": "说话风格(词汇密度/句长/口癖/禁用词)"},
+                    "behavior_logic": {"type": "string", "description": "行为逻辑(遇强权怎办?遇朋友怎办?)"},
+                    "motivation": {"type": "string", "description": "主线动机(为什么行动?)"},
+                    "arc": {"type": "string", "description": "人物弧光(起点→转折→终点)"},
+                    "growth_state": {"type": "string", "description": "当前成长状态(随剧情更新)"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_world",
+            "description": "世界观档案管理:创建/更新/查询世界观条目(地点/势力/规则/时间线/传说)。2号架构师专用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["create", "update", "query", "list"],
+                               "description": "create/update=新建或更新条目(category+name 唯一);query=按 category+name 查询;list=列出全部"},
+                    "category": {"type": "string",
+                                 "enum": ["location", "faction", "rule", "timeline", "lore"],
+                                 "description": "条目类型:location=地点/faction=势力/rule=规则/timeline=时间线/lore=传说"},
+                    "name": {"type": "string", "description": "条目名称 (action=create/update/query 必填)"},
+                    "description": {"type": "string", "description": "详细描述"},
+                    "attributes": {"type": "string", "description": "JSON 字符串:附加属性(如地点气候/势力层级)"},
+                    "related_chars": {"type": "string", "description": "JSON 字符串:关联角色名数组"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_milestone",
+            "description": "主线里程碑管理:添加/查询/更新里程碑(如第3章得线索,第8章遇宿敌)。2号架构师产出必交附件。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["add", "list", "update"],
+                               "description": "add=添加里程碑;list=列出项目全部里程碑;update=更新状态/达成章"},
+                    "chapter_idx": {"type": "integer", "description": "目标章节号 (action=add 必填)"},
+                    "title": {"type": "string", "description": "里程碑标题 (action=add 必填)"},
+                    "description": {"type": "string", "description": "详细描述"},
+                    "status": {"type": "string",
+                               "enum": ["pending", "reached", "missed"],
+                               "description": "状态:pending=待达成/reached=已达成/missed=未达成"},
+                    "reached_chapter": {"type": "integer", "description": "实际达成章节号 (action=update 可填)"},
+                    "milestone_id": {"type": "string", "description": "里程碑 id (action=update 必填)"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cache_style",
+            "description": "缓存章节风格特征和主线关键词频率,供5号质检员对比风格一致性。6号资料员专用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chapter_idx": {"type": "integer", "description": "章节序号(同章覆盖更新)"},
+                    "features": {"type": "string", "description": "JSON 字符串:风格指纹(句长/词频/视角/语气...)"},
+                    "keywords": {"type": "string", "description": "JSON 字符串:主线关键词出现频率"},
+                },
+                "required": ["chapter_idx", "features", "keywords"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "four_check",
+            "description": "四重校验:①逻辑/事实/伏笔冲突 ②文笔风格一致性(对比style_cache) ③主线推进度(对比milestones) ④角色OOC(对照character_profiles)。5号质检员专用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chapter_id": {"type": "string", "description": "待校验的章节 id"},
+                },
+                "required": ["chapter_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_delivery_report",
+            "description": "整合定稿章节,生成4份可视化报告:风格一致性曲线/主线推进轨迹/伏笔回收状态/角色成长追踪。7号监制专用,只读。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chapter_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "指定章节 id 数组(可选,缺省取全部定稿/完成章节)",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -1539,6 +1658,135 @@ async def dispatch(pid: str, name: str, args: dict) -> str:
                 url=args["url"],
                 full_page=bool(args.get("full_page", True)),
             )
+        # === 新架构: 7-agent 协作工具 ===
+        elif name == "manage_character":
+            action = args.get("action", "list")
+            if action in ("create", "update"):
+                cname = args.get("name", "")
+                if not cname:
+                    res = {"error": "action=create/update 需要提供 name"}
+                else:
+                    fields = {k: args[k] for k in
+                              ("role", "personality", "speech_style",
+                               "behavior_logic", "motivation", "arc", "growth_state")
+                              if k in args}
+                    cpid = store.upsert_character_profile(pid, cname, **fields)
+                    res = {"id": cpid, "name": cname, "action": action}
+            elif action == "query":
+                cname = args.get("name", "")
+                if not cname:
+                    res = {"error": "action=query 需要提供 name"}
+                else:
+                    res = store.get_character_profile(pid, cname) or {"error": f"未找到角色档案 {cname}"}
+            elif action == "list":
+                res = {"profiles": store.list_character_profiles(pid)}
+            else:
+                res = {"error": f"未知 action: {action}"}
+        elif name == "manage_world":
+            action = args.get("action", "list")
+            if action in ("create", "update"):
+                category = args.get("category", "")
+                wname = args.get("name", "")
+                if not category or not wname:
+                    res = {"error": "action=create/update 需要提供 category 和 name"}
+                else:
+                    fields = {k: args[k] for k in
+                              ("description", "attributes", "related_chars")
+                              if k in args}
+                    wid = store.upsert_world_entry(pid, category, wname, **fields)
+                    res = {"id": wid, "category": category, "name": wname, "action": action}
+            elif action == "query":
+                category = args.get("category", "")
+                wname = args.get("name", "")
+                rows = store.list_world_entries(pid, category=category or None)
+                matched = [r for r in rows if r.get("name") == wname] if wname else rows
+                res = {"entries": matched}
+            elif action == "list":
+                res = {"entries": store.list_world_entries(pid, category=args.get("category"))}
+            else:
+                res = {"error": f"未知 action: {action}"}
+        elif name == "manage_milestone":
+            action = args.get("action", "list")
+            if action == "add":
+                cidx = args.get("chapter_idx")
+                title = args.get("title", "")
+                if cidx is None or not title:
+                    res = {"error": "action=add 需要 chapter_idx 和 title"}
+                else:
+                    mid = store.add_milestone(pid, int(cidx), title, args.get("description", ""))
+                    res = {"id": mid, "chapter_idx": int(cidx), "title": title}
+            elif action == "list":
+                res = {"milestones": store.list_milestones(pid, status=args.get("status"))}
+            elif action == "update":
+                mid = args.get("milestone_id", "")
+                if not mid:
+                    res = {"error": "action=update 需要 milestone_id"}
+                else:
+                    fields = {k: args[k] for k in
+                              ("status", "reached_chapter", "title", "description")
+                              if k in args}
+                    store.update_milestone(mid, **fields)
+                    res = {"id": mid, "updated": list(fields.keys())}
+            else:
+                res = {"error": f"未知 action: {action}"}
+        elif name == "cache_style":
+            cidx = args.get("chapter_idx")
+            if cidx is None:
+                res = {"error": "需要 chapter_idx"}
+            else:
+                sid = store.upsert_style_cache(
+                    pid, int(cidx),
+                    args.get("features", ""),
+                    args.get("keywords", ""),
+                )
+                res = {"id": sid, "chapter_idx": int(cidx), "status": "cached"}
+        elif name == "four_check":
+            cid = args.get("chapter_id", "")
+            ch = store.get_chapter(cid)
+            if not ch:
+                res = {"error": "章节不存在"}
+            else:
+                pid_real = ch["project_id"]
+                content = ch.get("content", "")
+                idx = ch.get("idx", 0)
+                # 检查①: 用现有 quality_check 逻辑(调 store.list_foreshadowings 检查伏笔状态)
+                foreshadows = store.list_foreshadowings(pid_real)
+                unresolved = [f for f in foreshadows if f.get("status") == "planted" and f.get("expected_recovery") and f["expected_recovery"] <= idx]
+                check1 = {"pass": len(unresolved) == 0, "issues": [f"伏笔「{f['name']}」预期第{f['expected_recovery']}章回收但未回收" for f in unresolved]}
+                # 检查②: 风格一致性(对比 style_cache 前3章)
+                caches = store.list_style_cache(pid_real)
+                check2 = {"pass": True, "baseline_chapters": len(caches), "note": "有风格缓存基线" if caches else "无风格缓存,跳过"}
+                # 检查③: 主线推进度(对比 milestones)
+                milestones = store.list_milestones(pid_real)
+                due = [m for m in milestones if m.get("chapter_idx", 999) <= idx and m.get("status") == "pending"]
+                check3 = {"pass": len(due) == 0, "issues": [f"里程碑「{m['title']}」(目标第{m['chapter_idx']}章)未达成" for m in due]}
+                # 检查④: 角色OOC(对照 character_profiles)
+                profiles = store.list_character_profiles(pid_real)
+                check4 = {"pass": True, "profiles_count": len(profiles), "note": "有角色档案可对照" if profiles else "无角色档案,跳过"}
+                all_pass = all([check1["pass"], check2["pass"], check3["pass"], check4["pass"]])
+                res = {"chapter_id": cid, "chapter_idx": idx, "all_pass": all_pass,
+                       "check1_logic_foreshadow": check1, "check2_style_consistency": check2,
+                       "check3_milestone_progress": check3, "check4_character_ooc": check4,
+                       "verdict": "盖章放行" if all_pass else "打回修改"}
+        elif name == "generate_delivery_report":
+            chs = store.list_chapters(pid)
+            finished = [c for c in chs if c.get("status") in ("done", "final")]
+            cids = args.get("chapter_ids")
+            if cids:
+                cid_set = set(cids)
+                finished = [c for c in finished if c.get("id") in cid_set]
+            foreshadows = store.list_foreshadowings(pid)
+            milestones = store.list_milestones(pid)
+            profiles = store.list_character_profiles(pid)
+            style_caches = store.list_style_cache(pid)
+            res = {
+                "total_chapters": len(finished),
+                "chapters": [{"idx": c.get("idx", 0), "title": c.get("title", ""), "chars": len(c.get("content", "") or "")} for c in finished],
+                "style_consistency_curve": [{"chapter_idx": s["chapter_idx"]} for s in style_caches],
+                "milestone_tracking": [{"chapter_idx": m["chapter_idx"], "title": m["title"], "status": m["status"]} for m in milestones],
+                "foreshadow_status": [{"name": f["name"], "status": f["status"], "planted": f.get("planted_chapter"), "recovered": f.get("actual_recovery")} for f in foreshadows],
+                "character_growth": [{"name": p["name"], "arc": p.get("arc", ""), "growth_state": p.get("growth_state", "")} for p in profiles],
+            }
         else:
             res = {"error": f"未知工具 {name}"}
     except Exception as e:

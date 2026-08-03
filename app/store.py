@@ -166,6 +166,69 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq);
             CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, started_at DESC);
+
+            -- ===== 新架构: 角色档案系统 (4号角色师管理) =====
+            -- 每个角色独立档案: 性格基调/说话风格/行为逻辑/主线动机/人物弧光
+            CREATE TABLE IF NOT EXISTS character_profiles (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                name TEXT NOT NULL,             -- 角色名
+                role TEXT DEFAULT '',           -- 主角/配角/反派/...
+                personality TEXT DEFAULT '',    -- 性格基调 (冷峻/活泼/阴郁...)
+                speech_style TEXT DEFAULT '',   -- 说话风格 (词汇密度/句长/口癖/禁用词)
+                behavior_logic TEXT DEFAULT '', -- 行为逻辑 (遇强权怎办?遇朋友怎办?)
+                motivation TEXT DEFAULT '',     -- 主线动机 (为什么行动?)
+                arc TEXT DEFAULT '',            -- 人物弧光 (起点→转折→终点)
+                growth_state TEXT DEFAULT '',   -- 当前成长状态 (随剧情更新)
+                meta TEXT DEFAULT '{}',
+                created_at REAL,
+                updated_at REAL,
+                UNIQUE(project_id, name),
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            -- ===== 新架构: 世界观档案系统 (2号架构师管理) =====
+            -- 地点/势力/规则/时间线节点, 每条独立档案
+            CREATE TABLE IF NOT EXISTS world_entries (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                category TEXT NOT NULL,         -- location | faction | rule | timeline | lore
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',    -- 详细描述
+                attributes TEXT DEFAULT '{}',   -- JSON: 附加属性 (如地点的气候/势力的层级)
+                related_chars TEXT DEFAULT '[]',-- JSON: 关联角色名数组
+                created_at REAL,
+                updated_at REAL,
+                UNIQUE(project_id, category, name),
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            -- ===== 新架构: 主线里程碑清单 (2号架构师产出) =====
+            CREATE TABLE IF NOT EXISTS milestones (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                chapter_idx INTEGER NOT NULL,   -- 目标章节号
+                title TEXT NOT NULL,            -- 里程碑标题 (如"第3章得线索")
+                description TEXT DEFAULT '',    -- 详细描述
+                status TEXT DEFAULT 'pending',  -- pending | reached | missed
+                reached_chapter INTEGER,        -- 实际达成章节号
+                created_at REAL,
+                updated_at REAL,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            -- ===== 新架构: 风格缓存 (6号资料员维护) =====
+            -- 缓存前N章风格特征, 供5号质检员对比风格一致性
+            CREATE TABLE IF NOT EXISTS style_cache (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                chapter_idx INTEGER NOT NULL,
+                features TEXT DEFAULT '{}',     -- JSON: 风格指纹 (句长/词频/视角/语气...)
+                keywords TEXT DEFAULT '{}',     -- JSON: 主线关键词出现频率
+                created_at REAL,
+                UNIQUE(project_id, chapter_idx),
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
             """
         )
     # 中断恢复: 上次进程异常退出 (kill/崩溃) 会留下 status='running' 的孤儿 run
@@ -686,3 +749,197 @@ def aggregate_project_metrics(project_id: str) -> dict:
             "avg_run_duration_sec": round(r["avg_dur"], 2),
             "total_tool_calls": tool_n["n"],
         }
+
+
+# ===== 新架构: 角色档案系统 (4号角色师管理) =====
+
+def upsert_character_profile(pid: str, name: str, **fields) -> str:
+    """创建或更新角色档案。name 唯一, 已存在则更新。"""
+    cid = _uuid()
+    now = _now()
+    allowed = {"role", "personality", "speech_style", "behavior_logic",
+               "motivation", "arc", "growth_state", "meta"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    with _lock, get_conn() as c:
+        row = c.execute(
+            "SELECT id FROM character_profiles WHERE project_id=? AND name=?",
+            (pid, name),
+        ).fetchone()
+        if row:
+            cid = row["id"]
+            if sets:
+                sets_sql = ", ".join(f"{k}=?" for k in sets)
+                c.execute(
+                    f"UPDATE character_profiles SET {sets_sql}, updated_at=? WHERE id=?",
+                    (*sets.values(), now, cid),
+                )
+            return cid
+        c.execute(
+            "INSERT INTO character_profiles (id, project_id, name, role, personality, "
+            "speech_style, behavior_logic, motivation, arc, growth_state, meta, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (cid, pid, name, sets.get("role", ""), sets.get("personality", ""),
+             sets.get("speech_style", ""), sets.get("behavior_logic", ""),
+             sets.get("motivation", ""), sets.get("arc", ""),
+             sets.get("growth_state", ""), sets.get("meta", "{}"), now, now),
+        )
+        return cid
+
+
+def list_character_profiles(pid: str) -> list[dict]:
+    with get_conn() as c:
+        rows = c.execute(
+            "SELECT * FROM character_profiles WHERE project_id=? ORDER BY created_at",
+            (pid,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_character_profile(pid: str, name: str) -> Optional[dict]:
+    with get_conn() as c:
+        row = c.execute(
+            "SELECT * FROM character_profiles WHERE project_id=? AND name=?",
+            (pid, name),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def delete_character_profile(cpid: str) -> None:
+    with _lock, get_conn() as c:
+        c.execute("DELETE FROM character_profiles WHERE id=?", (cpid,))
+
+
+# ===== 新架构: 世界观档案系统 (2号架构师管理) =====
+
+def upsert_world_entry(pid: str, category: str, name: str, **fields) -> str:
+    """创建或更新世界观档案。category+name 唯一。"""
+    wid = _uuid()
+    now = _now()
+    allowed = {"description", "attributes", "related_chars"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    with _lock, get_conn() as c:
+        row = c.execute(
+            "SELECT id FROM world_entries WHERE project_id=? AND category=? AND name=?",
+            (pid, category, name),
+        ).fetchone()
+        if row:
+            wid = row["id"]
+            if sets:
+                sets_sql = ", ".join(f"{k}=?" for k in sets)
+                c.execute(
+                    f"UPDATE world_entries SET {sets_sql}, updated_at=? WHERE id=?",
+                    (*sets.values(), now, wid),
+                )
+            return wid
+        c.execute(
+            "INSERT INTO world_entries (id, project_id, category, name, description, "
+            "attributes, related_chars, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (wid, pid, category, name, sets.get("description", ""),
+             sets.get("attributes", "{}"), sets.get("related_chars", "[]"), now, now),
+        )
+        return wid
+
+
+def list_world_entries(pid: str, category: Optional[str] = None) -> list[dict]:
+    with get_conn() as c:
+        if category:
+            rows = c.execute(
+                "SELECT * FROM world_entries WHERE project_id=? AND category=? ORDER BY created_at",
+                (pid, category),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM world_entries WHERE project_id=? ORDER BY category, created_at",
+                (pid,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_world_entry(wid: str) -> None:
+    with _lock, get_conn() as c:
+        c.execute("DELETE FROM world_entries WHERE id=?", (wid,))
+
+
+# ===== 新架构: 主线里程碑清单 (2号架构师产出) =====
+
+def add_milestone(pid: str, chapter_idx: int, title: str, description: str = "") -> str:
+    mid = _uuid()
+    now = _now()
+    with _lock, get_conn() as c:
+        c.execute(
+            "INSERT INTO milestones (id, project_id, chapter_idx, title, description, "
+            "status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (mid, pid, chapter_idx, title, description, "pending", now, now),
+        )
+        return mid
+
+
+def list_milestones(pid: str, status: Optional[str] = None) -> list[dict]:
+    with get_conn() as c:
+        if status:
+            rows = c.execute(
+                "SELECT * FROM milestones WHERE project_id=? AND status=? ORDER BY chapter_idx",
+                (pid, status),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM milestones WHERE project_id=? ORDER BY chapter_idx",
+                (pid,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_milestone(mid: str, **fields) -> None:
+    allowed = {"status", "reached_chapter", "title", "description"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    sets_sql = ", ".join(f"{k}=?" for k in sets)
+    with _lock, get_conn() as c:
+        c.execute(
+            f"UPDATE milestones SET {sets_sql}, updated_at=? WHERE id=?",
+            (*sets.values(), _now(), mid),
+        )
+
+
+# ===== 新架构: 风格缓存 (6号资料员维护) =====
+
+def upsert_style_cache(pid: str, chapter_idx: int, features: str, keywords: str) -> str:
+    sid = _uuid()
+    now = _now()
+    with _lock, get_conn() as c:
+        row = c.execute(
+            "SELECT id FROM style_cache WHERE project_id=? AND chapter_idx=?",
+            (pid, chapter_idx),
+        ).fetchone()
+        if row:
+            sid = row["id"]
+            c.execute(
+                "UPDATE style_cache SET features=?, keywords=?, created_at=? WHERE id=?",
+                (features, keywords, now, sid),
+            )
+            return sid
+        c.execute(
+            "INSERT INTO style_cache (id, project_id, chapter_idx, features, keywords, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (sid, pid, chapter_idx, features, keywords, now),
+        )
+        return sid
+
+
+def list_style_cache(pid: str) -> list[dict]:
+    with get_conn() as c:
+        rows = c.execute(
+            "SELECT * FROM style_cache WHERE project_id=? ORDER BY chapter_idx",
+            (pid,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_style_cache(pid: str, chapter_idx: int) -> Optional[dict]:
+    with get_conn() as c:
+        row = c.execute(
+            "SELECT * FROM style_cache WHERE project_id=? AND chapter_idx=?",
+            (pid, chapter_idx),
+        ).fetchone()
+        return dict(row) if row else None

@@ -64,8 +64,8 @@ const AGENT_LABELS = {
   "character-designer": "角色师",
   "consistency-checker": "质检员",
   "story-explorer": "资料员",
-  worldbuilder: "设定管理员",
-  // 兼容旧名
+  presenter: "监制",
+  worldbuilder: "设定管理员", // 兼容旧名
   planner: "策划师", writer: "主笔", editor: "编辑",
 };
 const AGENT_ICONS = {
@@ -75,8 +75,8 @@ const AGENT_ICONS = {
   "character-designer": "👤",
   "consistency-checker": "🔍",
   "story-explorer": "📊",
-  worldbuilder: "🌐",
-  // 兼容旧名
+  presenter: "📋",
+  worldbuilder: "🌐", // 兼容旧名
   planner: "📐", writer: "✍️", editor: "🔧",
 };
 
@@ -110,6 +110,13 @@ const TOOL_CN = {
   web_search: "网页搜索",
   browser_fetch: "浏览器抓取",
   browser_screenshot: "浏览器截图",
+  // 新架构工具 (角色档案/世界观/里程碑/风格缓存/四重校验/交付报告)
+  manage_character: "角色档案管理",
+  manage_world: "世界观档案管理",
+  manage_milestone: "里程碑管理",
+  cache_style: "风格缓存",
+  four_check: "四重校验",
+  generate_delivery_report: "生成交付报告",
 };
 
 function cnTool(name) {
@@ -608,7 +615,7 @@ async function loadMessages(pid) {
         </div>
         <div class="tb-body">
           <div class="tb-args">${esc(JSON.stringify(args, null, 2))}</div>
-          <div class="tb-result">${esc((result || "").slice(0, 600))}</div>
+          <div class="tb-result">${prettyResult(result, fn)}</div>
         </div>`;
         chain.appendChild(blk);
       }
@@ -693,6 +700,23 @@ function scrollChat() {
   c.scrollTop = c.scrollHeight;
 }
 
+// 群聊式: 总编气泡封口后, 下次总编发言需开新气泡
+// 通过重置 assistant 的 DOM 引用到新 bubble 元素实现 (subBubbles 保留)
+function rotateOrchestratorBubble(assistant) {
+  if (!assistant.closed) return;
+  const div = document.createElement("div");
+  div.className = "msg assistant";
+  div.innerHTML = `<div class="role assistant">✦ 天衍</div><div class="bubble"></div>`;
+  $("#chat").appendChild(div);
+  // 重置 DOM 引用, 保留 steps(左面板索引) 和 subBubbles(专家气泡引用)
+  assistant.el = div.querySelector(".bubble");
+  assistant.chainEl = null;
+  assistant.answerEl = null;
+  assistant.rawBuf = "";
+  assistant.closed = false;
+  scrollChat();
+}
+
 async function send(text) {
   if (!currentProject) {
     toast("请先创建或选择一个项目", "warn");
@@ -711,13 +735,19 @@ async function send(text) {
   showThinkPanel();
 
   const assistant = appendMessage("assistant", "", true);
+  let streamCompleted = false;
 
   try {
     const res = await fetch(`/api/projects/${currentProject.id}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input: text, agent: "orchestrator" }),
+      // keepalive 让长连接更稳定 (沙箱预览环境下减少被中断概率)
+      keepalive: true,
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -732,13 +762,24 @@ async function send(text) {
         let evt;
         try { evt = JSON.parse(line.slice(6)); } catch { continue; }
         handleEvent(evt, assistant);
+        if (evt.type === "done" || evt.type === "error") streamCompleted = true;
       }
     }
     // 清除 loading
     removeThinkLoading();
   } catch (e) {
     removeThinkLoading();
-    assistant.el.innerHTML = `<span class="err">连接失败: ${esc(e.message)}</span>`;
+    // 群聊式: 若已收到 done/error 事件, 说明后端正常完成, 只是连接关闭, 不报错
+    if (streamCompleted) {
+      hideThinkPanel();
+      return;
+    }
+    // 未完成: 温和小字提示 (不用感叹号, 不覆盖已渲染内容)
+    // 后端可能仍在处理或已断开, 已显示的思考/委派内容保留
+    const tip = document.createElement("div");
+    tip.className = "stream-tip";
+    tip.textContent = "（连接已断开，上方内容已保留，可稍后重试）";
+    assistant.el.appendChild(tip);
     hideThinkPanel();
   }
 }
@@ -783,6 +824,10 @@ function appendThink(html) {
 
 function handleEvent(evt, assistant) {
   const bubble = assistant.el;
+  // 调试: 记录所有收到的事件 (F12 console 看)
+  if (evt.type && evt.type.startsWith("sub_")) {
+    console.log("%c[群聊事件] " + evt.type, "color:#3d6b8b;font-weight:bold", evt);
+  }
   switch (evt.type) {
     case "start":
       window.__naRunStartTs = Date.now();
@@ -869,15 +914,205 @@ function handleEvent(evt, assistant) {
       break;
     }
     case "delegate": {
-      // 委派: 左侧思考面板显示
+      // 群聊式: 总编 @某专家去执行 — 作为总编的一句话, 发完封口气泡
       const toLbl = AGENT_LABELS[evt.to] || evt.to;
       const toIcon = AGENT_ICONS[evt.to] || "↪";
+      const fromLbl = AGENT_LABELS[evt.from] || evt.from || "总编";
+      const fromIcon = AGENT_ICONS[evt.from] || "🎯";
       if (evt.to) updateActiveAgent(evt.to);
-      const task = (evt.task || "").slice(0, 60);
+      const task = evt.task || "";
+
+      // 左侧思考面板: 简洁条目
       appendThink(`<div class="tp-entry tp-delegate">
         <span class="tp-icon">${toIcon}</span>
-        <span class="tp-text"><span class="tp-label delegate">委派</span> → <b>${toLbl}</b>${task ? "：" + esc(task) : ""}</span>
+        <span class="tp-text"><span class="tp-label delegate">委派</span> → <b>${toLbl}</b>${task ? "：" + esc(task.slice(0, 60)) : ""}</span>
       </div>`);
+
+      // 群聊式: 若上一轮总编气泡已封口, 先开新气泡再发言 (每次@拍一拍都是独立气泡)
+      if (assistant.closed) {
+        rotateOrchestratorBubble(assistant);
+      }
+      // 主对话区: @消息作为总编气泡的发言正文 (群聊式 @拍一拍)
+      const spk = document.createElement("div");
+      spk.className = "md answer-body delegate-speak";
+      spk.innerHTML = `<span class="at-tag">${toIcon} @${esc(toLbl)}</span>
+        <span class="delegate-task">${esc(task)}</span>`;
+      assistant.el.appendChild(spk);
+      // 封口当前总编气泡 (下次总编发言会开新气泡)
+      assistant.el.classList.add("bubble-closed");
+      assistant.closed = true;
+      scrollChat();
+      break;
+    }
+    case "delegate_done": {
+      // 群聊式: 被@的专家执行完成 — 结果已在专家气泡的 sub_answer 里展示
+      // 此处只更新左侧面板, 不再往总编气泡塞卡片
+      const toLbl = AGENT_LABELS[evt.to] || evt.to;
+      const toIcon = AGENT_ICONS[evt.to] || "↪";
+      const dur = evt.duration_ms ? `${(evt.duration_ms / 1000).toFixed(1)}s` : "";
+      appendThink(`<div class="tp-entry tp-delegate-done">
+        <span class="tp-icon">${toIcon}</span>
+        <span class="tp-text"><span class="tp-label done">完成</span> <b>${toLbl}</b> ${dur ? `· ${dur}` : ""}</span>
+      </div>`);
+      if (evt.to) updateActiveAgent(evt.from || "orchestrator");
+      scrollChat();
+      break;
+    }
+    case "sub_agent_start": {
+      // 群聊式: 专家 agent 开始独立发言, 建独立聊天气泡
+      console.log("[群聊] sub_agent_start 事件收到:", evt);
+      const ag = evt.agent || "";
+      const agLbl = AGENT_LABELS[ag] || ag;
+      const agIcon = AGENT_ICONS[ag] || "👤";
+      const task = evt.task || "";
+      if (ag) updateActiveAgent(ag);
+      // 左侧思考面板: 标记专家开始
+      appendThink(`<div class="tp-entry tp-sub-start">
+        <span class="tp-icon">${agIcon}</span>
+        <span class="tp-text"><span class="tp-label sub">发言</span> <b>${esc(agLbl)}</b>${task ? "：" + esc(task.slice(0, 50)) : ""}</span>
+      </div>`);
+      // 主对话区: 建专家独立气泡
+      const subDiv = document.createElement("div");
+      subDiv.className = `msg sub-agent agent-${ag}`;
+      subDiv.dataset.agent = ag;
+      subDiv.innerHTML = `<div class="role sub-role">${agIcon} ${esc(agLbl)}</div>
+        <div class="bubble sub-bubble">
+          ${task ? `<div class="sub-task">📦 接到任务：${esc(task.slice(0, 200))}${task.length > 200 ? "…" : ""}</div>` : ""}
+          <div class="sub-think-wrap" hidden></div>
+          <div class="sub-answer-wrap"></div>
+        </div>`;
+      $("#chat").appendChild(subDiv);
+      // 缓存到 assistant 上, 供后续 sub_think/sub_answer 填充
+      if (!assistant.subBubbles) assistant.subBubbles = {};
+      assistant.subBubbles[ag] = {
+        el: subDiv,
+        thinkWrap: subDiv.querySelector(".sub-think-wrap"),
+        answerWrap: subDiv.querySelector(".sub-answer-wrap"),
+      };
+      scrollChat();
+      break;
+    }
+    case "sub_think": {
+      // 群聊式: 专家 agent 的思考过程流式追加到其气泡思考区
+      const ag = evt.agent || "";
+      const text = evt.text || "";
+      if (!text) break;
+      const entry = assistant.subBubbles && assistant.subBubbles[ag];
+      if (!entry) break;
+      let wrap = entry.thinkWrap;
+      if (wrap.hidden) {
+        wrap.hidden = false;
+        wrap.innerHTML = `<div class="sub-think-label">💭 思考过程</div><div class="sub-think-body"></div>`;
+      }
+      let body = wrap.querySelector(".sub-think-body");
+      if (!body) {
+        body = document.createElement("div");
+        body.className = "sub-think-body";
+        wrap.appendChild(body);
+      }
+      body.textContent += text + "\n";
+      scrollChat();
+      break;
+    }
+    case "sub_answer": {
+      // 群聊式: 专家 agent 的最终回答作为气泡正文
+      const ag = evt.agent || "";
+      const text = evt.text || "";
+      if (!text) break;
+      const entry = assistant.subBubbles && assistant.subBubbles[ag];
+      if (!entry) break;
+      // 折叠思考区 (已思考完, 进入回答)
+      if (!entry.thinkWrap.hidden) {
+        const lbl = entry.thinkWrap.querySelector(".sub-think-label");
+        if (lbl) {
+          lbl.textContent = "💭 思考过程 (已完成, 点击折叠)";
+          lbl.classList.add("collapsible");
+          lbl.onclick = () => {
+            const body = entry.thinkWrap.querySelector(".sub-think-body");
+            if (body) body.hidden = !body.hidden;
+          };
+        }
+      }
+      entry.answerWrap.innerHTML = `<div class="sub-answer-body md">${renderMd(text)}</div>`;
+      scrollChat();
+      break;
+    }
+    case "sub_agent_done": {
+      // 群聊式: 专家 agent 发言结束
+      const ag = evt.agent || "";
+      const agLbl = AGENT_LABELS[ag] || ag;
+      const agIcon = AGENT_ICONS[ag] || "👤";
+      const truncated = evt.truncated;
+      const entry = assistant.subBubbles && assistant.subBubbles[ag];
+      if (entry) {
+        // 标记气泡完成
+        entry.el.classList.add("sub-done");
+        if (truncated) {
+          entry.answerWrap.innerHTML += `<div class="sub-truncated">⚠ 步数用尽, 任务未完全完成</div>`;
+        }
+      }
+      appendThink(`<div class="tp-entry tp-sub-done">
+        <span class="tp-icon">${agIcon}</span>
+        <span class="tp-text"><span class="tp-label done">发言结束</span> <b>${esc(agLbl)}</b>${truncated ? " · 步数用尽" : ""}</span>
+      </div>`);
+      // 活跃 agent 切回总编
+      updateActiveAgent("orchestrator");
+      scrollChat();
+      break;
+    }
+    case "sub_agent_error": {
+      const ag = evt.agent || "";
+      const agLbl = AGENT_LABELS[ag] || ag;
+      const entry = assistant.subBubbles && assistant.subBubbles[ag];
+      if (entry) {
+        entry.el.classList.add("sub-error");
+        entry.answerWrap.innerHTML = `<div class="sub-error-msg">❌ 调用失败: ${esc(evt.error || "")}</div>`;
+      }
+      appendThink(`<div class="tp-entry tp-sub-error">
+        <span class="tp-icon">⚠</span>
+        <span class="tp-text"><b>${esc(agLbl)}</b> 调用失败</span>
+      </div>`);
+      scrollChat();
+      break;
+    }
+    case "review": {
+      // 群聊式: 总编验收 (符合设想→产出 / 有问题→打回)
+      const pass = evt.pass;
+      const verdict = evt.verdict || "";
+      const delegations = evt.delegations || [];
+      const agLbl = AGENT_LABELS[evt.agent] || "总编";
+      const agIcon = AGENT_ICONS[evt.agent] || "🎯";
+
+      // 左侧思考面板
+      appendThink(`<div class="tp-entry tp-review ${pass ? "" : "reject"}">
+        <span class="tp-icon">${agIcon}</span>
+        <span class="tp-text"><span class="tp-label ${pass ? "ok" : "no"}">${pass ? "验收通过" : "验收打回"}</span> ${esc(verdict.slice(0, 80))}</span>
+      </div>`);
+
+      // 群聊式: 总编气泡若已封口, 开新气泡展示验收
+      if (assistant.closed) {
+        rotateOrchestratorBubble(assistant);
+      }
+      // 主对话区: 验收卡片
+      if (!assistant.chainEl) {
+        assistant.chainEl = document.createElement("div");
+        assistant.chainEl.className = "think-chain";
+        assistant.el.appendChild(assistant.chainEl);
+      }
+      const revBlk = document.createElement("div");
+      revBlk.className = `collab-card collab-review ${pass ? "pass" : "reject"}`;
+      const dlHtml = delegations.map((d) => {
+        const lbl = AGENT_LABELS[d.to] || d.to;
+        const icon = AGENT_ICONS[d.to] || "↪";
+        return `<div class="cc-rv-item">${icon} ${esc(lbl)}: ${esc((d.task || "").slice(0, 50))}</div>`;
+      }).join("");
+      revBlk.innerHTML = `<div class="cc-head">
+        <span class="cc-from">${agIcon} ${esc(agLbl)} 验收</span>
+        <span class="cc-status ${pass ? "done" : "no"}">${pass ? "✓ 符合设想, 产出" : "✗ 不符设想, 打回重做"}</span>
+      </div>
+      ${dlHtml ? `<div class="cc-rv-list">${dlHtml}</div>` : ""}
+      <div class="cc-verdict">${esc(verdict)}</div>`;
+      assistant.chainEl.appendChild(revBlk);
       scrollChat();
       break;
     }
@@ -905,13 +1140,26 @@ function handleEvent(evt, assistant) {
         <span class="tp-text"><span class="tp-label tool">调用</span> <b>${esc(toolName)}</b>${agIcon ? " · " + esc(agLbl) : ""}</span>
       </div>`);
 
+      // 群聊式: delegate_to_agent 工具的展示由 delegate 事件负责, 此处跳过执行块
+      if (evt.tool === "delegate_to_agent") {
+        scrollChat();
+        break;
+      }
+
+      // 群聊式: 总编气泡若已封口, 开新气泡再展示后续步骤
+      if (assistant.closed) {
+        rotateOrchestratorBubble(assistant);
+      }
+      // 重新取 bubble 引用 (可能已轮转)
+      const curBubble = assistant.el;
+
       // 右侧: 用 think-block (无框, 不可复制, 可折叠) 替代旧 step-card
       // 两段式: 思考块 (如有 thinking) + 执行块
       // 确保 think-chain 容器存在
       if (!assistant.chainEl) {
         assistant.chainEl = document.createElement("div");
         assistant.chainEl.className = "think-chain";
-        bubble.appendChild(assistant.chainEl);
+        curBubble.appendChild(assistant.chainEl);
       }
 
       // 思考块: 打草稿/推理 (先于执行展示, 体现"先思考再行动")
@@ -955,7 +1203,7 @@ function handleEvent(evt, assistant) {
     case "observation": {
       const step = assistant.steps[assistant.steps.length - 1];
       if (step && step.execBlk) {
-        step.resultEl.innerHTML = `<span class="tb-result-text">${prettyResult(evt.result)}</span>`;
+        step.resultEl.innerHTML = prettyResult(evt.result, step.tool);
         step.statusEl.textContent = "✓ 完成";
         step.statusEl.style.color = "var(--green)";
         step.execBlk.classList.remove("tb-tool");
@@ -974,21 +1222,27 @@ function handleEvent(evt, assistant) {
     }
     case "answer_start": {
       removeThinkLoading();
+      // 群聊式: 总编气泡若已封口(上次是@委派), 开新气泡展示最终回答
+      if (assistant.closed) {
+        rotateOrchestratorBubble(assistant);
+      }
       assistant.answerEl = document.createElement("div");
       assistant.answerEl.className = "md answer-body";
-      bubble.appendChild(assistant.answerEl);
+      assistant.el.appendChild(assistant.answerEl);
       assistant.rawBuf = "";
       const caret = document.createElement("span");
       caret.className = "caret";
-      bubble.appendChild(caret);
+      assistant.el.appendChild(caret);
       break;
     }
     case "token": {
       if (!assistant.answerEl) {
+        // 兜底: 没有 answer_start 也建回答区
+        if (assistant.closed) rotateOrchestratorBubble(assistant);
         assistant.answerEl = document.createElement("div");
         assistant.answerEl.className = "md answer-body";
         assistant.rawBuf = "";
-        bubble.appendChild(assistant.answerEl);
+        assistant.el.appendChild(assistant.answerEl);
       }
       assistant.rawBuf += evt.text;
       assistant.answerEl.innerHTML = renderMd(assistant.rawBuf);
@@ -1085,13 +1339,153 @@ function handleEvent(evt, assistant) {
   }
 }
 
-function prettyResult(r) {
+function prettyResult(r, tool) {
+  let o;
   try {
-    const o = typeof r === "string" ? JSON.parse(r) : r;
-    return JSON.stringify(o, null, 2);
+    o = typeof r === "string" ? JSON.parse(r) : r;
   } catch {
-    return r;
+    return `<span class="tb-result-text">${esc(r)}</span>`;
   }
+  // 四重校验: 渲染为四项检查卡片 + 总裁决
+  if (tool === "four_check" && o && typeof o === "object") {
+    return renderFourCheck(o);
+  }
+  // 交付报告: 渲染为4份可视化报告
+  if (tool === "generate_delivery_report" && o && typeof o === "object") {
+    return renderDeliveryReport(o);
+  }
+  return `<span class="tb-result-text">${esc(JSON.stringify(o, null, 2))}</span>`;
+}
+
+// ============ 四重校验卡片渲染 ============
+function renderFourCheck(o) {
+  const allPass = o.all_pass;
+  const verdict = o.verdict || (allPass ? "盖章放行" : "打回修改");
+  const c1 = o.check1_logic_foreshadow || {};
+  const c2 = o.check2_style_consistency || {};
+  const c3 = o.check3_milestone_progress || {};
+  const c4 = o.check4_character_ooc || {};
+
+  const checkItem = (label, idx, check) => {
+    const pass = check.pass;
+    const issues = check.issues || [];
+    const note = check.note || "";
+    const issuesHtml = issues.length
+      ? `<ul class="fc-issues">${issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`
+      : "";
+    const noteHtml = note ? `<div class="fc-note">${esc(note)}</div>` : "";
+    return `<div class="fc-item ${pass ? "pass" : "fail"}">
+      <div class="fc-head">
+        <span class="fc-idx">检查${idx}</span>
+        <span class="fc-label">${esc(label)}</span>
+        <span class="fc-status ${pass ? "ok" : "no"}">${pass ? "✓ 通过" : "✗ 不通过"}</span>
+      </div>
+      ${noteHtml}
+      ${issuesHtml}
+    </div>`;
+  };
+
+  return `<div class="four-check-card ${allPass ? "all-pass" : "has-fail"}">
+    <div class="fc-verdict ${allPass ? "pass" : "fail"}">
+      <span class="fc-verdict-icon">${allPass ? "✓" : "✗"}</span>
+      <span class="fc-verdict-text">${esc(verdict)}</span>
+      <span class="fc-verdict-chapter">第${o.chapter_idx ?? "?"}章</span>
+    </div>
+    ${checkItem("逻辑/事实/伏笔冲突", "①", c1)}
+    ${checkItem("文笔风格一致性", "②", c2)}
+    ${checkItem("主线推进度", "③", c3)}
+    ${checkItem("角色OOC", "④", c4)}
+  </div>`;
+}
+
+// ============ 交付报告渲染 (4份可视化报告) ============
+function renderDeliveryReport(o) {
+  const total = o.total_chapters || 0;
+  const chapters = o.chapters || [];
+  const styleCurve = o.style_consistency_curve || [];
+  const milestones = o.milestone_tracking || [];
+  const foreshadows = o.foreshadow_status || [];
+  const characters = o.character_growth || [];
+
+  // 1. 风格一致性曲线 (按章节字数简易示意)
+  const maxChars = Math.max(1, ...chapters.map((c) => c.chars || 0));
+  const styleBars = chapters.map((c) => {
+    const h = Math.max(4, Math.round(((c.chars || 0) / maxChars) * 60));
+    const hasCache = styleCurve.some((s) => s.chapter_idx === c.idx);
+    return `<div class="dr-bar-wrap" title="第${c.idx}章 ${c.chars}字${hasCache ? "·有风格缓存" : ""}">
+      <div class="dr-bar ${hasCache ? "has-cache" : ""}" style="height:${h}px"></div>
+      <div class="dr-bar-idx">${c.idx}</div>
+    </div>`;
+  }).join("");
+
+  // 2. 主线推进轨迹 (里程碑标注)
+  const milestoneRows = milestones.length ? milestones.map((m) => {
+    const statusIcon = { reached: "✓", pending: "⏳", missed: "✗" }[m.status] || "·";
+    const statusCls = { reached: "ok", pending: "wait", missed: "no" }[m.status] || "";
+    return `<tr class="ms-row ${statusCls}">
+      <td class="ms-chap">第${m.chapter_idx}章</td>
+      <td class="ms-title">${esc(m.title || "")}</td>
+      <td class="ms-status">${statusIcon} ${esc(m.status || "")}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="3" class="dr-empty">暂无里程碑</td></tr>`;
+
+  // 3. 伏笔回收状态表
+  const foreshadowRows = foreshadows.length ? foreshadows.map((f) => {
+    const statusIcon = { recovered: "✓", planted: "🌱", abandoned: "✗" }[f.status] || "·";
+    const statusCls = { recovered: "ok", planted: "wait", abandoned: "no" }[f.status] || "";
+    return `<tr class="fs-row ${statusCls}">
+      <td class="fs-name">${esc(f.name || "")}</td>
+      <td class="fs-status">${statusIcon} ${esc(f.status || "")}</td>
+      <td class="fs-planted">${f.planted != null ? "第" + f.planted + "章" : "—"}</td>
+      <td class="fs-recovered">${f.recovered != null ? "第" + f.recovered + "章" : "—"}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="4" class="dr-empty">暂无伏笔</td></tr>`;
+
+  // 4. 角色成长追踪表
+  const charRows = characters.length ? characters.map((c) => {
+    return `<tr class="cg-row">
+      <td class="cg-name">${esc(c.name || "")}</td>
+      <td class="cg-arc">${esc(c.arc || "—")}</td>
+      <td class="cg-growth">${esc(c.growth_state || "—")}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="3" class="dr-empty">暂无角色档案</td></tr>`;
+
+  return `<div class="delivery-report">
+    <div class="dr-header">
+      <span class="dr-icon">📋</span>
+      <span class="dr-title">监制交付报告</span>
+      <span class="dr-total">共 ${total} 章定稿</span>
+    </div>
+
+    <div class="dr-section">
+      <div class="dr-section-title">📊 风格一致性曲线</div>
+      <div class="dr-style-curve">${styleBars || '<div class="dr-empty">暂无章节</div>'}</div>
+    </div>
+
+    <div class="dr-section">
+      <div class="dr-section-title">🎯 主线推进轨迹</div>
+      <table class="dr-table ms-table">
+        <thead><tr><th>目标章节</th><th>里程碑</th><th>状态</th></tr></thead>
+        <tbody>${milestoneRows}</tbody>
+      </table>
+    </div>
+
+    <div class="dr-section">
+      <div class="dr-section-title">🌱 伏笔回收状态</div>
+      <table class="dr-table fs-table">
+        <thead><tr><th>伏笔</th><th>状态</th><th>埋设</th><th>回收</th></tr></thead>
+        <tbody>${foreshadowRows}</tbody>
+      </table>
+    </div>
+
+    <div class="dr-section">
+      <div class="dr-section-title">👤 角色成长追踪</div>
+      <table class="dr-table cg-table">
+        <thead><tr><th>角色</th><th>人物弧光</th><th>当前成长状态</th></tr></thead>
+        <tbody>${charRows}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 // ---------- 章节抽屉 (可编辑) ----------

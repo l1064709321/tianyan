@@ -3,7 +3,7 @@
 架构:
 - 主 agent (默认 orchestrator 总编) 接收用户输入,通过 delegate_to_agent 工具委派给专家
 - 6 位专家 agent (story-architect/narrative-writer/character-designer/
-  consistency-checker/story-explorer/worldbuilder) 各司其职,有独立系统提示词与工具子集
+  consistency-checker/story-explorer/presenter) 各司其职,有独立系统提示词与工具子集
 - 子 agent 也可再委派其他专家 (如 narrative-writer 需要新增角色 → 委派 character-designer)
 - 委派深度限制 MAX_DELEGATE_DEPTH,避免无限递归
 - 只读沙盒: consistency-checker 和 story-explorer 不允许调用写入类工具
@@ -31,7 +31,7 @@ from typing import AsyncIterator, Optional
 
 from . import agents, store, tools
 from .config import get_settings
-from .llm import chat
+from .llm import chat, stream
 
 
 # ===== 改进: 主动意图澄清 (ReAct 之前的"信息足不足"判断) =====
@@ -429,11 +429,69 @@ def _truncate_for_trace(s, n: int = 800) -> str:
     return s[:n] + ("…" if len(s) > n else "")
 
 
+# ---------- 总编验收 (群聊式协作的汇总环节) ----------
+async def self_review(
+    pid: str, user_input: str, delegation_log: list[dict],
+    final_answer: str, model_cfg,
+) -> tuple[bool, str]:
+    """总编对照用户原始需求 + 委派结果 + 最终答案, 显式过一遍。
+
+    返回 (是否通过, 评语)。不通过时评语指出问题, 主流程会打回重做。
+    零成本兜底: LLM 调用失败时默认通过 (不阻塞产出)。
+    """
+    # 委派摘要 (截断, 避免 prompt 过长)
+    dl_summary = []
+    for d in delegation_log:
+        dl_summary.append(
+            f"- @{d['to']}: 任务={_trunc(d['task'], 80)} → 结果={_trunc(d['result'], 200)}"
+        )
+    dl_text = "\n".join(dl_summary) or "(无委派)"
+
+    review_messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是天衍总编, 现在要验收本轮工作。各专家已执行完委派任务, 主笔已产出最终答案。"
+                "请你对照用户原始需求, 逐项检查:\n"
+                "1. 委派的专家是否做对了事? 结果是否达标?\n"
+                "2. 最终答案是否完整回应了用户需求? 有无遗漏/跑偏?\n"
+                "3. 是否有明显的错误/不一致/未完成的环节?\n\n"
+                "输出格式 (必须严格遵守):\n"
+                '<<<REVIEW>>>{"pass": true/false, "verdict": "一句话评语: 通过理由 / 打回原因"}'
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"# 用户原始需求\n{user_input}\n\n"
+                f"# 本轮委派记录\n{dl_text}\n\n"
+                f"# 最终答案\n{_trunc(final_answer, 600)}\n\n"
+                "请验收。"
+            ),
+        },
+    ]
+    try:
+        resp = await chat(review_messages, model_cfg, temperature=0.2, max_tokens=400)
+        text = resp.get("content", "") or ""
+        m = re.search(r"<<<REVIEW>>>\s*(\{.*\})", text, re.S)
+        if m:
+            data = json.loads(m.group(1))
+            return bool(data.get("pass", True)), str(data.get("verdict", ""))
+        # 没解析到 JSON, 看文本里有没有"不通过/打回/问题"
+        if any(kw in text for kw in ("不通过", "打回", "未通过", "有问题", "重做")):
+            return False, text[:150]
+        return True, "验收通过(默认)"
+    except Exception as e:
+        logger.warning(f"总编验收 LLM 调用失败, 默认通过: {e}")
+        return True, "验收跳过(LLM调用失败)"
+
+
 # ---------- 工具调用与 trace 落盘 ----------
 async def _exec_tool(
     pid: str, fname: str, fargs: dict, *,
     depth: int, emit, agent_name: str = agents.DEFAULT_AGENT,
     run_id: Optional[str] = None,
+    delegation_log: Optional[list] = None,
 ) -> str:
     """执行工具;对 delegate_to_agent 走子 agent 运行循环。
 
@@ -475,6 +533,14 @@ async def _exec_tool(
         result = await _run_sub_agent(pid, target, task, depth=depth + 1, emit=emit, run_id=run_id)
         dur_ms = int((time.time() - t0) * 1000)
         logger.info(f"[{target}] ← 委派完成 耗时={time.time()-t0:.1f}s 结果={_trunc(result, 200)}")
+        # 群聊式: 子 agent 执行完成, 发 delegate_done 带 task/result 供前端展示
+        await emit({"type": "delegate_done", "from": agent_name, "to": target,
+                    "task": task, "result": result, "duration_ms": dur_ms})
+        # 记录委派历史 (供总编验收)
+        if delegation_log is not None:
+            delegation_log.append({
+                "to": target, "task": task, "result": result, "duration_ms": dur_ms,
+            })
         if run_id:
             store.add_run_event(run_id, "delegate_done", agent=target,
                                 output=_truncate_for_trace(result, 800), duration_ms=dur_ms)
@@ -524,6 +590,8 @@ async def _run_sub_agent(
     # 太紧 (如 4 步) 会导致子 agent 在取 few-shot 阶段就把步数用光,没机会写正文。
     sub_max_steps = max(8, s.max_steps)
     logger.info(f"[{agent_name}] 子 agent 启动 max_steps={sub_max_steps} task={_trunc(task, 200)}")
+    # 群聊式: 通知前端子 agent 开始发言 (前端建独立聊天气泡)
+    await emit({"type": "sub_agent_start", "agent": agent_name, "task": task, "depth": depth})
     for step in range(sub_max_steps):
         t0 = time.time()
         try:
@@ -536,6 +604,7 @@ async def _run_sub_agent(
             if run_id:
                 store.add_run_event(run_id, "error", agent=agent_name,
                                     error=f"step={step} {e}", duration_ms=int((time.time()-t0)*1000))
+            await emit({"type": "sub_agent_error", "agent": agent_name, "error": str(e)})
             return f"(子 agent {agent_name} 调用失败: {e})"
 
         tool_calls = resp["tool_calls"]
@@ -557,7 +626,16 @@ async def _run_sub_agent(
             logger.info(f"[{agent_name}] step={step} 完成 回答长度={len(content or '')}")
             await emit({"type": "step", "agent": agent_name, "tool": "(完成)",
                         "args": {}, "thinking": thinking, "depth": depth})
+            # 群聊式: 把子 agent 的最终回答作为聊天气泡正文推给前端
+            if content:
+                await emit({"type": "sub_answer", "agent": agent_name, "text": content, "depth": depth})
+            await emit({"type": "sub_agent_done", "agent": agent_name, "depth": depth})
             return content or ""
+
+        # 群聊式: 子 agent 的思考过程 (本轮 LLM 输出) 作为聊天气泡思考区推给前端
+        if thinking:
+            await emit({"type": "sub_think", "agent": agent_name, "text": thinking,
+                        "step": step, "depth": depth})
 
         messages.append({
             "role": "assistant",
@@ -587,6 +665,7 @@ async def _run_sub_agent(
                         "result": result, "depth": depth})
 
     logger.warning(f"[{agent_name}] 达到最大步数 {sub_max_steps},任务未完成")
+    await emit({"type": "sub_agent_done", "agent": agent_name, "depth": depth, "truncated": True})
     return f"(子 agent {agent_name} 达到最大步数 {sub_max_steps},任务未完全完成)"
 
 
@@ -610,26 +689,19 @@ async def run(
     # 新建一次 run 记录,用于 trace 回放/统计
     run_id = store.create_run(pid, user_input, agent_name)
     store.add_run_event(run_id, "start", agent=agent_name, input_=user_input)
+    # 单次 run 总时长起点 (用于 run_max_duration 超时保护)
+    _run_start_ts = time.time()
     logger.info(f"========== 主 agent 启动 pid={pid} agent={agent_name} max_steps={s.max_steps} run_id={run_id} ==========")
     logger.info(f"[{agent_name}] 用户输入: {_trunc(user_input, 200)}")
     store.add_message(pid, "user", user_input)
 
     # ===== 改进: 主动意图澄清 (信息不足先反问, 不硬猜) =====
-    # 在进入工具循环前检测, 命中则直接反问并结束本轮, 等用户补充后再来
+    # 注: 原版在此处命中即 early return, 会跳过思考阶段 → 用户看不到思考过程。
+    # 现已改为: 任何输入都先进入思考阶段推演, 由思考阶段判定信息不足时再反问。
+    # 保留 clarify_q 仅作为思考 prompt 的提示信息 (让模型知道规则层也认为信息不足)。
     clarify_q = _check_clarification_needed(pid, user_input)
     if clarify_q:
-        logger.info(f"[{agent_name}] 触发意图澄清: {clarify_q}")
-        store.add_message(pid, "assistant", clarify_q)
-        store.add_run_event(run_id, "clarify", agent=agent_name, output=clarify_q)
-        store.finish_run(run_id, status="clarified")
-        yield _event({"type": "start", "agent": agent_name, "input": user_input, "run_id": run_id})
-        yield _event({"type": "answer_start", "agent": agent_name})
-        for i in range(0, len(clarify_q), 12):
-            yield _event({"type": "token", "text": clarify_q[i: i + 12]})
-        yield _event({"type": "answer_end"})
-        yield _event({"type": "done", "agent": agent_name, "steps": 0,
-                      "clarified": True, "run_id": run_id})
-        return
+        logger.info(f"[{agent_name}] 规则层提示信息可能不足(交由思考阶段裁决): {clarify_q}")
 
     # 改进: 异步提取用户消息中的偏好/反馈到跨会话经验库 (零成本启发式)
     try:
@@ -671,6 +743,13 @@ async def run(
                     "2. 现有数据够不够? (项目设定/已有章节/上传素材/联网能力)\n"
                     "3. 如果能做, 拆成哪些步骤? 每步用什么工具?\n"
                     "4. 如果不能做或数据不足, 明确指出缺什么, 需要用户补充什么。\n\n"
+                    "【Skill 优先】你有专业写作技能内核 (111位白金作家拆解DB), 推演步骤时优先用 skill 工具:\n"
+                    "  拆书→deconstruct / 审计→full_audit,audit_novel / 开篇诊断→diagnose_opening /\n"
+                    "  仿写→imitate_style / 卡文→diagnose_stuck / 代笔→ghostwrite / AI味→detect_ai\n"
+                    "  不要全用普通工具, 能用 skill 内核的优先用 skill。\n\n"
+                    "特殊情况: 如果用户只是打招呼(如「你好」「在吗」)或闲聊, 这不是创作任务, "
+                    "推演后判定 feasible=true 并在 reason 里写「闲聊/问候」, plan 留空即可, "
+                    "后续直接友好回应即可, 不需要调用任何工具。\n\n"
                     "输出格式 (必须严格遵守):\n"
                     "先写推演过程 (打草稿, 算步骤, 评估数据, 100-300字, 像自言自语),\n"
                     "然后最后一行必须是 JSON 判断, 格式:\n"
@@ -683,7 +762,8 @@ async def run(
                     f"# 用户想法/任务\n{user_input}\n\n"
                     f"# 当前项目上下文\n{_project_brief_for_think(pid)}\n\n"
                     f"# 已有章节/设定概况\n{_assets_summary_for_think(pid)}\n\n"
-                    f"请在脑海里推演这件事的可行性, 推演过程要详细, 最后用 <<<JUDGE>>>JSON 给出判断。"
+                    + (f"# 规则层提示\n系统检测到信息可能不足: {clarify_q}\n请在推演时重点评估是否确实如此。\n\n" if clarify_q else "")
+                    + "请在脑海里推演这件事的可行性, 推演过程要详细, 最后用 <<<JUDGE>>>JSON 给出判断。"
                     + (f"\n\n# 上一轮推演被判定不可行, 原因: {think_reject_reason}\n请重新思考如何调整。" if think_reject_reason else "")
                 ),
             },
@@ -697,6 +777,11 @@ async def run(
         # 流式逐字产出思考过程
         think_buf = ""
         try:
+            # 超时保护: stream() 可能因网络/API 限流挂起不返回,
+            # 限时 60s, 超时则走 fallback (feasible=True),
+            # 避免前端 SSE 长时间无事件被浏览器断开 → "连接失败"
+            _think_t0 = time.time()
+            _THINK_TIMEOUT = 60.0
             async for tok in stream(
                 think_messages, s.default_model,
                 temperature=0.5,
@@ -706,6 +791,11 @@ async def run(
                 # 实时把 token 发给前端 (打字机效果)
                 yield _event({"type": "think_token", "agent": agent_name,
                               "round": think_round + 1, "text": tok})
+                # 超时强制中断 (保护前端不报连接失败)
+                if time.time() - _think_t0 > _THINK_TIMEOUT:
+                    logger.warning(f"[{agent_name}] 思考阶段流式超时 ({_THINK_TIMEOUT}s), 中断走 fallback")
+                    think_buf = think_buf or "思考超时, 跳过推演直接尝试执行。"
+                    break
         except Exception as e:
             logger.warning(f"[{agent_name}] 思考阶段流式失败: {e}")
             think_buf = ""
@@ -741,7 +831,7 @@ async def run(
             "feasible": feasible, "reason": reason, "missing": missing, "plan": plan,
         })
         store.add_run_event(run_id, "think", agent=agent_name,
-                            thinking=thinking_text, feasible=feasible, reason=reason)
+                            output={"thinking": thinking_text, "feasible": feasible, "reason": reason})
         logger.info(f"[{agent_name}] 思考轮{think_round+1}: feasible={feasible} reason={_trunc(reason, 80)}")
 
         if feasible:
@@ -778,6 +868,9 @@ async def run(
                 return
 
     # 推演通过, 进入工具循环执行
+
+    # 委派历史: 记录本轮发生过的委派 (用于产出前总编验收)
+    delegation_log: list[dict] = []
 
     # 工具调用循环检测: 记录 (tool_name, args_hash) → 连续调用次数
     # 连续相同调用超阈值 = LLM 卡循环了, 强制终止
@@ -836,8 +929,18 @@ async def run(
                             duration_ms=int((time.time()-t0)*1000))
 
         # ===== 风险防护: 单次 run 累计超限就终止 =====
-        # 防止 LLM 失控 / agent 卡循环 / 烧钱
+        # 防止 LLM 失控 / agent 卡循环 / 烧钱 / 跑太久
         run_meta = store.get_run(run_id) or {}
+        # 总时长检查 (默认 600s = 10 分钟, 用户要求: 超时即终止)
+        _elapsed = time.time() - _run_start_ts
+        if s.run_max_duration > 0 and _elapsed > s.run_max_duration:
+            msg = (f"单次 run 超时 ({int(_elapsed)}s > {s.run_max_duration}s),已终止。"
+                   "10 分钟内未能完成任务,请拆分任务或重试。")
+            logger.warning(f"[{agent_name}] {msg}")
+            store.add_run_event(run_id, "error", agent=agent_name, error=msg)
+            store.finish_run(run_id, status="interrupted", error=msg)
+            yield _event({"type": "error", "message": msg, "run_id": run_id})
+            return
         if run_meta.get("total_tokens", 0) > s.run_max_tokens:
             msg = f"单次 run token 超限 ({run_meta['total_tokens']} > {s.run_max_tokens}),已终止"
             logger.warning(f"[{agent_name}] {msg}")
@@ -855,6 +958,35 @@ async def run(
 
         if not tool_calls:
             logger.info(f"[{agent_name}] step={step} 完成 回答长度={len(content or '')}")
+
+            # ===== 群聊式协作: 总编验收环节 =====
+            # 主 agent 委派过专家后, 产出最终答案前, 总编对照用户原始需求 + 委派结果
+            # 显式过一遍: 是否符合设想? 没问题产出; 有问题打回重做。
+            # 闲聊/无委派场景跳过验收。
+            if delegation_log:
+                review_pass, review_verdict = await self_review(
+                    pid, user_input, delegation_log, content, s.default_model,
+                )
+                # 通知前端: 总编验收 (符合/打回 + 评语)
+                yield _event({
+                    "type": "review", "agent": agent_name,
+                    "pass": review_pass, "verdict": review_verdict,
+                    "delegations": delegation_log,
+                })
+                logger.info(f"[{agent_name}] 总编验收: pass={review_pass} verdict={_trunc(review_verdict, 100)}")
+                store.add_run_event(run_id, "review", agent=agent_name,
+                                    output={"pass": review_pass, "verdict": review_verdict})
+                if not review_pass:
+                    # 验收不通过: 打回, 让 LLM 根据验收意见重新执行 (追加 system 提示, 不直接结束)
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            f"【总编验收未通过】{review_verdict}\n"
+                            "请根据上述验收意见调整, 重新委派或调用工具, 确保产出符合用户需求。"
+                        ),
+                    })
+                    continue  # 回到工具循环, 让 LLM 重新执行
+
             store.add_message(pid, "assistant", content)
             store.add_run_event(run_id, "end", agent=agent_name,
                                 output=_truncate_for_trace(content, 800),
@@ -869,6 +1001,7 @@ async def run(
             yield _event({
                 "type": "done", "agent": agent_name,
                 "steps": step + 1, "stats": stats, "run_id": run_id,
+                "reviewed": bool(delegation_log),
             })
             logger.info(f"========== 主 agent 完成 steps={step+1} run_id={run_id} ==========")
             # 改进: 异步提取关键信息写入长期记忆 (不阻塞响应)
@@ -951,6 +1084,7 @@ async def run(
                 asyncio.ensure_future(_exec_tool(
                     pid, fname, fargs, depth=0, emit=emit,
                     agent_name=agent_name, run_id=run_id,
+                    delegation_log=delegation_log,
                 ))
                 for _, fname, fargs in tool_items
             ]
@@ -999,6 +1133,7 @@ async def run(
                 exec_task = asyncio.ensure_future(_exec_tool(
                     pid, fname, fargs, depth=0, emit=emit,
                     agent_name=agent_name, run_id=run_id,
+                    delegation_log=delegation_log,
                 ))
                 if hb <= 0:
                     result = await exec_task

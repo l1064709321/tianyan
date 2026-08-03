@@ -844,3 +844,184 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .font-scale-row input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;
   background:var(--accent);border:2px solid var(--paper);cursor:pointer}
 .font-scale-hint{font-size:11px;color:var(--muted);font-family:var(--sans)}
+
+/* ===== 群聊式协作卡片 (@谁 → 谁执行 → 总编验收) ===== */
+.collab-card{margin:8px 0;padding:10px 12px;border-radius:var(--radius);
+  border:1px solid var(--border);background:var(--paper2);font-family:var(--sans);
+  font-size:13px;animation:collabIn .2s ease-out}
+@keyframes collabIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.collab-card .cc-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  margin-bottom:6px;font-weight:600}
+.collab-card .cc-from{color:var(--ink)}
+.collab-card .cc-action{color:var(--accent);font-weight:700}
+.collab-card .cc-to{color:var(--blue);background:rgba(61,107,139,.1);
+  padding:1px 8px;border-radius:10px;font-weight:600}
+.collab-card .cc-status{margin-left:auto;font-size:11px;font-weight:600;
+  color:var(--muted)}
+.collab-card .cc-status.done{color:var(--green)}
+.collab-card .cc-status.no{color:var(--red)}
+.collab-card .cc-task{font-size:12.5px;color:var(--ink2);line-height:1.6;
+  padding:6px 8px;background:var(--paper);border-radius:var(--radius-sm);
+  border-left:3px solid var(--blue);margin:4px 0}
+.collab-card .cc-result{font-size:12px;color:var(--ink2);line-height:1.6;
+  padding:6px 8px;background:var(--paper);border-radius:var(--radius-sm);
+  border-left:3px solid var(--green);margin-top:4px}
+.collab-card .cc-result-label{font-weight:600;color:var(--green)}
+.collab-card.collab-done{border-color:var(--green)}
+.collab-card.collab-done .cc-to{background:rgba(90,107,63,.12);color:var(--green)}
+
+/* 验收卡片 */
+.collab-card.collab-review{border-width:2px}
+.collab-card.collab-review.pass{border-color:var(--green);
+  background:linear-gradient(135deg,rgba(90,107,63,.06),var(--paper2))}
+.collab-card.collab-review.reject{border-color:var(--red);
+  background:linear-gradient(135deg,rgba(161,61,61,.06),var(--paper2))}
+.collab-card .cc-rv-list{font-size:11.5px;color:var(--muted);margin:4px 0;
+  padding-left:4px}
+.collab-card .cc-rv-item{padding:2px 0}
+.collab-card .cc-verdict{font-size:12.5px;color:var(--ink);line-height:1.6;
+  padding:6px 8px;background:var(--paper);border-radius:var(--radius-sm);
+  margin-top:4px;font-style:italic}
+.collab-card.collab-review.reject .cc-verdict{border-left:3px solid var(--red)}
+.collab-card.collab-review.pass .cc-verdict{border-left:3px solid var(--green)}
+
+/* === 群聊式: 总编 @拍一拍 发言 + 气泡封口 === */
+.bubble.bubble-closed{opacity:.78;border-bottom:1px dashed var(--border2);margin-bottom:6px}
+.delegate-speak{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;
+  padding:6px 0 2px;border-top:1px solid var(--border);margin-top:6px}
+.delegate-speak .at-tag{display:inline-block;background:var(--blue);color:var(--paper);
+  font-size:12px;font-weight:600;padding:2px 8px;border-radius:10px;white-space:nowrap}
+.delegate-speak .delegate-task{font-size:13px;color:var(--ink2);line-height:1.5;flex:1;min-width:120px}
+.stream-tip{font-size:12px;color:var(--muted);text-align:center;padding:8px 0;margin-top:6px;
+  border-top:1px dashed var(--border2);font-style:italic}
+
+/* === 群聊式: 专家 agent 独立气泡 === */
+.msg.sub-agent{align-items:flex-start;margin:10px 0;animation:collabIn .25s ease-out}
+.msg.sub-agent .sub-role{font-size:11px;color:var(--blue);margin-bottom:5px;
+  display:flex;align-items:center;gap:5px;font-weight:600}
+.msg.sub-agent .sub-bubble{background:var(--paper2);border:1px solid var(--border);
+  border-left:3px solid var(--blue);border-radius:var(--radius);
+  padding:10px 12px;max-width:100%;min-width:0;
+  font-family:var(--sans);font-size:var(--chat-msg-font);
+  line-height:var(--chat-line);color:var(--ink2);
+  user-select:text;-webkit-user-select:text;word-break:break-word}
+/* 各 agent 染色 (左 border + 角色名色) */
+.msg.sub-agent.agent-story-architect{border-left-color:var(--blue)}
+.msg.sub-agent.agent-story-architect .sub-role{color:var(--blue)}
+.msg.sub-agent.agent-narrative-writer .sub-bubble{border-left-color:var(--accent)}
+.msg.sub-agent.agent-narrative-writer .sub-role{color:var(--accent)}
+.msg.sub-agent.agent-character-designer .sub-bubble{border-left-color:#8b5cf6}
+.msg.sub-agent.agent-character-designer .sub-role{color:#8b5cf6}
+.msg.sub-agent.agent-consistency-checker .sub-bubble{border-left-color:var(--yellow)}
+.msg.sub-agent.agent-consistency-checker .sub-role{color:var(--yellow)}
+.msg.sub-agent.agent-story-explorer .sub-bubble{border-left-color:var(--green)}
+.msg.sub-agent.agent-story-explorer .sub-role{color:var(--green)}
+.msg.sub-agent.agent-presenter .sub-bubble{border-left-color:#0891b2}
+.msg.sub-agent.agent-presenter .sub-role{color:#0891b2}
+/* 任务条 */
+.sub-task{font-size:11.5px;color:var(--muted);background:var(--paper3);
+  padding:5px 8px;border-radius:var(--radius-sm);margin-bottom:6px;
+  line-height:1.5;border-left:2px solid var(--border2)}
+/* 思考区 */
+.sub-think-wrap{margin:4px 0 6px;padding:6px 8px;background:var(--paper3);
+  border-radius:var(--radius-sm);font-size:12px;color:var(--muted);
+  border:1px dashed var(--border2)}
+.sub-think-label{font-size:11px;font-weight:600;color:var(--muted);
+  margin-bottom:4px;cursor:default}
+.sub-think-label.collapsible{cursor:pointer;user-select:none}
+.sub-think-label.collapsible:hover{color:var(--ink2)}
+.sub-think-body{white-space:pre-wrap;line-height:1.6;max-height:200px;
+  overflow-y:auto;font-family:var(--mono);font-size:11.5px}
+/* 回答区 */
+.sub-answer-wrap{margin-top:4px}
+.sub-answer-body{color:var(--ink);line-height:var(--chat-line)}
+.sub-answer-body p{margin:6px 0}
+.sub-answer-body h3{font-size:13px;margin:8px 0 4px;color:var(--ink)}
+.sub-answer-body ul,.sub-answer-body ol{margin:4px 0 4px 20px}
+.sub-answer-body li{margin:2px 0}
+/* 完成态 */
+.msg.sub-agent.sub-done .sub-bubble{border-left-width:4px}
+.msg.sub-agent.sub-done .sub-role::after{content:" ✓";color:var(--green)}
+.sub-truncated{margin-top:6px;font-size:11px;color:var(--yellow);
+  font-style:italic;padding:3px 6px;background:rgba(154,107,31,.08);
+  border-radius:var(--radius-sm)}
+.sub-error-msg{color:var(--red);font-size:12px;padding:6px 8px;
+  background:rgba(196,61,61,.06);border-radius:var(--radius-sm);
+  border-left:2px solid var(--red)}
+
+/* 左侧思考面板的委派/验收条目 */
+.tp-entry.tp-delegate .tp-label.delegate{color:var(--blue);font-weight:600}
+.tp-entry.tp-delegate-done .tp-label.done{color:var(--green);font-weight:600}
+.tp-entry.tp-review .tp-label.ok{color:var(--green);font-weight:600}
+.tp-entry.tp-review .tp-label.no{color:var(--red);font-weight:600}
+.tp-entry.tp-review.reject .tp-text{color:var(--red)}
+
+/* ===== 四重校验卡片 (5号质检员 four_check 结果) ===== */
+.four-check-card{margin:6px 0;padding:8px 10px;border-radius:var(--radius);
+  border:1px solid var(--border);background:var(--paper2);font-family:var(--sans);
+  font-size:12px;animation:collabIn .2s ease-out;user-select:text;-webkit-user-select:text}
+.four-check-card.all-pass{border-color:var(--green);
+  background:linear-gradient(135deg,rgba(90,107,63,.06),var(--paper2))}
+.four-check-card.has-fail{border-color:var(--red);
+  background:linear-gradient(135deg,rgba(161,61,61,.06),var(--paper2))}
+.fc-verdict{display:flex;align-items:center;gap:8px;padding:6px 8px;
+  background:var(--paper);border-radius:var(--radius-sm);margin-bottom:6px;
+  font-weight:600}
+.fc-verdict.pass{color:var(--green);border-left:3px solid var(--green)}
+.fc-verdict.fail{color:var(--red);border-left:3px solid var(--red)}
+.fc-verdict-icon{font-size:14px;font-weight:700}
+.fc-verdict-text{flex:1}
+.fc-verdict-chapter{font-size:11px;color:var(--muted);font-weight:400}
+.fc-item{display:flex;flex-direction:column;gap:3px;padding:5px 8px;
+  margin:4px 0;background:var(--paper);border-radius:var(--radius-sm);
+  border-left:3px solid var(--muted)}
+.fc-item.pass{border-left-color:var(--green)}
+.fc-item.fail{border-left-color:var(--red)}
+.fc-head{display:flex;align-items:center;gap:6px;font-size:11.5px}
+.fc-idx{color:var(--muted);font-weight:600;min-width:42px}
+.fc-label{flex:1;color:var(--ink);font-weight:500}
+.fc-status{font-size:11px;font-weight:600;padding:1px 6px;border-radius:8px}
+.fc-status.ok{color:var(--green);background:rgba(90,107,63,.12)}
+.fc-status.no{color:var(--red);background:rgba(161,61,61,.12)}
+.fc-note{font-size:11px;color:var(--muted);padding-left:48px}
+.fc-issues{margin:2px 0 0 48px;padding-left:14px;font-size:11px;color:var(--red);
+  line-height:1.6}
+.fc-issues li{list-style:disc}
+
+/* ===== 监制交付报告 (7号监制 generate_delivery_report 结果) ===== */
+.delivery-report{margin:6px 0;padding:10px 12px;border-radius:var(--radius);
+  border:1px solid var(--border);background:var(--paper2);font-family:var(--sans);
+  font-size:12px;animation:collabIn .2s ease-out;user-select:text;-webkit-user-select:text}
+.dr-header{display:flex;align-items:center;gap:8px;padding-bottom:8px;
+  border-bottom:1px solid var(--border);margin-bottom:8px}
+.dr-icon{font-size:16px}
+.dr-title{flex:1;font-weight:700;color:var(--ink);font-size:13px}
+.dr-total{font-size:11px;color:var(--muted);font-weight:500}
+.dr-section{margin:8px 0}
+.dr-section-title{font-size:12px;font-weight:600;color:var(--ink2);
+  margin-bottom:5px;padding-left:2px}
+.dr-empty{padding:8px;text-align:center;color:var(--muted);font-size:11px;
+  font-style:italic}
+.dr-table{width:100%;border-collapse:collapse;font-size:11.5px}
+.dr-table th{padding:4px 6px;text-align:left;font-weight:600;color:var(--ink2);
+  background:var(--paper);border-bottom:1px solid var(--border)}
+.dr-table td{padding:4px 6px;border-bottom:1px solid var(--border);color:var(--ink2)}
+.dr-table tr:last-child td{border-bottom:none}
+.dr-table .ms-row.ok,.dr-table .fs-row.ok{color:var(--green)}
+.dr-table .ms-row.no,.dr-table .fs-row.no{color:var(--red)}
+.dr-table .ms-row.wait,.dr-table .fs-row.wait{color:var(--muted)}
+.ms-status,.fs-status{font-weight:600}
+.ms-chap,.fs-planted,.fs-recovered{color:var(--muted);white-space:nowrap}
+.ms-title,.fs-name,.cg-name{color:var(--ink)}
+.cg-arc,.cg-growth{color:var(--ink2);line-height:1.5}
+
+/* 风格一致性曲线 (柱状图) */
+.dr-style-curve{display:flex;align-items:flex-end;gap:4px;padding:8px 6px;
+  background:var(--paper);border-radius:var(--radius-sm);min-height:80px;
+  overflow-x:auto}
+.dr-bar-wrap{display:flex;flex-direction:column;align-items:center;gap:2px;
+  min-width:22px}
+.dr-bar{width:14px;background:var(--border2);border-radius:2px 2px 0 0;
+  transition:height .2s}
+.dr-bar.has-cache{background:var(--blue)}
+.dr-bar-idx{font-size:10px;color:var(--muted);font-family:var(--sans)}

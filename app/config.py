@@ -53,6 +53,9 @@ class Settings:
     run_max_cost: float = 1.0
     # 风险防护: 同一工具+同一参数连续调用次数上限 (防循环)
     loop_detect_count: int = 5
+    # 风险防护: 单次 run 总时长上限 (秒). 超过则强制停止并告知用户.
+    # 默认 600 秒 = 10 分钟 (用户要求: 10 分钟没解决就不行)
+    run_max_duration: int = 600
     # SSE 心跳间隔 (秒). 主 agent 在 LLM/工具调用阻塞期间定期 yield 心跳,
     # 防止前端长时间无数据误判为断连. 0 = 关闭.
     sse_heartbeat_interval: float = 15.0
@@ -113,6 +116,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         default_model=default_model,
         models=models,
         max_steps=int(raw.get("max_steps", 8)),
+        run_max_duration=int(raw.get("run_max_duration", 600)),
         chunk_size=int(raw.get("chunk_size", 2000)),
         chunk_overlap=int(raw.get("chunk_overlap", 200)),
         retrieve_k=int(raw.get("retrieve_k", 6)),
@@ -120,7 +124,6 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         server_port=int(raw.get("server_port", 8000)),
     )
     return s
-
 
 # 全局单例 (首次 import 时加载;运行期可用 reload_settings 刷新)
 _settings: Optional[Settings] = None
@@ -173,6 +176,7 @@ def save_settings() -> None:
         "default_model": _model_to_dict(s.default_model),
         "models": [_model_to_dict(m) for m in s.models],
         "max_steps": s.max_steps,
+        "run_max_duration": s.run_max_duration,
         "chunk_size": s.chunk_size,
         "chunk_overlap": s.chunk_overlap,
         "retrieve_k": s.retrieve_k,
@@ -198,15 +202,17 @@ def set_default_model(model: str) -> None:
 
 
 # 厂商预设(前端"添加模型"快捷选项)
-# 数据核对日期: 2026-07-15(各家官方文档/价格页)
+# 数据核对日期: 2026-08-02(各家官方文档/价格页/release notes)
 PROVIDER_PRESETS = [
-    # ---------- OpenAI (https://platform.openai.com/docs/models) ----------
+    # ---------- OpenAI (https://platform.openai.com/docs/models + help.openai.com release notes) ----------
     # litellm 前缀: openai/   env: OPENAI_API_KEY
-    # 2026-07-09 GPT-5.6 家族发布(Sol/Terra/Luna 三档);GPT-5.5 仍在售(4-23 发布)
+    # 2026-08-02 核实官方: GPT-5.6 系列 2026-07-09 发布(限量预览), 07-30 降价
+    #   - 三档: Sol 旗舰($5/$30) / Terra 均衡($2.50/$15) / Luna 极速($0.20/$1.20, 降80%)
+    #   - 官方无 sol-pro 变体, 仅 sol/terra/luna 三档
+    #   - GPT-5.5 (旗舰, $5/$30, 1M上下文) / GPT-5.4 / GPT-5.4-mini 仍在售 (models 页面主力)
     {"provider": "openai", "label": "OpenAI", "models": [
         # —— GPT-5.6 当前旗舰(三档: Sol 旗舰 / Terra 均衡 / Luna 极速) ——
         "openai/gpt-5.6-sol",
-        "openai/gpt-5.6-sol-pro",
         "openai/gpt-5.6-terra",
         "openai/gpt-5.6-luna",
         # —— GPT-5.5 系列(仍在售) ——
@@ -219,17 +225,29 @@ PROVIDER_PRESETS = [
     ], "env": "OPENAI_API_KEY", "api_base": "https://api.openai.com/v1"},
     # ---------- Google Gemini (https://ai.google.dev/gemini-api/docs/models) ----------
     # litellm 前缀: gemini/   env: GEMINI_API_KEY
-    # 2026-05 Gemini 3.5 Flash 发布;3.1 系列为当前主力;2.0 系列已 2026-06-01 下线
+    # 2026-08-02 核实官方: Gemini 3.6 Flash (2026-07-21, Stable, 1M输入/64K输出) 为当前最新主力
+    #   - 同期发布 3.5 Flash-Lite (高吞吐, 350 token/s, $0.30/$2.50)
+    #   - 3.5 Flash / 3.1 系列仍在售; 2.0 系列已于 2026-06-01 下线
     {"provider": "gemini", "label": "Google Gemini", "models": [
+        # —— Gemini 3.6 Flash 当前最新主力(2026-07-21, Stable) ——
+        "gemini/gemini-3.6-flash",
+        # —— Gemini 3.5 系列 ——
         "gemini/gemini-3.5-flash",
+        "gemini/gemini-3.5-flash-lite",
+        # —— Gemini 3.1 系列(仍在售) ——
         "gemini/gemini-3.1-pro",
         "gemini/gemini-3.1-flash",
         "gemini/gemini-3.1-flash-lite",
     ], "env": "GEMINI_API_KEY", "api_base": "https://generativelanguage.googleapis.com/v1beta"},
-    # ---------- xAI Grok (https://docs.x.ai/docs/models) ----------
+    # ---------- xAI Grok (https://docs.x.ai/docs/models + docs.x.ai/developers/release-notes) ----------
     # litellm 前缀: xai/   env: XAI_API_KEY
-    # 2026-05-06 Grok 4.3 上线(1M 上下文);grok-4/grok-3 等老模型 5-15 下线
+    # 2026-08-02 核实官方 release notes: Grok 4.5 (2026-07-08) 为当前最新
+    #   - 1.5万亿参数 MoE, 50万上下文, $2/$6, 与 Cursor 联合训练(编程/Agent 旗舰)
+    #   - Grok 4.3 (2026-05, 1M上下文) 仍在售; grok-4/grok-3 等老模型已于 2026-05-15 下线
     {"provider": "xai", "label": "xAI Grok", "models": [
+        # —— Grok 4.5 当前旗舰(2026-07-08, 编程/Agent 专用) ——
+        "xai/grok-4.5",
+        # —— Grok 4.3 (仍在售, 1M上下文) ——
         "xai/grok-4.3",
         "xai/grok-4.1",
         "xai/grok-4.1-mini",
@@ -253,21 +271,26 @@ PROVIDER_PRESETS = [
     ], "env": "MISTRAL_API_KEY", "api_base": "https://api.mistral.ai/v1"},
     # ---------- DeepSeek (https://api-docs.deepseek.com/quick_start/pricing) ----------
     # litellm 前缀: deepseek/   env: DEEPSEEK_API_KEY
-    # 2026-04-24 V4 系列(Pro/Flash)发布;旧别名 deepseek-chat/reasoner 将于 2026-07-24 退役
+    # 2026-08-02 核实官方文档: 当前在售仅 V4 系列(Pro/Flash)
+    #   - deepseek-v4-flash 已更新至 V4-Flash-0731 (1M上下文/384K输出, 默认思考模式)
+    #   - 旧别名 deepseek-chat / deepseek-reasoner 已于 2026-07-24 退役
+    #   - 网传 "DeepSeek-V5" 系第三方博彩站洗稿软文, 官方无此版本, 勿采信
     {"provider": "deepseek", "label": "DeepSeek 深度求索", "models": [
         "deepseek/deepseek-v4-pro",
         "deepseek/deepseek-v4-flash",
-        "deepseek/deepseek-v3.2",
-        "deepseek/deepseek-v3.1-terminus",
     ], "env": "DEEPSEEK_API_KEY", "api_base": "https://api.deepseek.com"},
     # ---------- 阿里云通义千问 DashScope (https://help.aliyun.com/zh/model-studio/models) ----------
     # litellm 前缀: dashscope/   env: DASHSCOPE_API_KEY
-    # 2026-05-20 Qwen3.7 系列发布(当前主力);3.6 系列仍在售
+    # 2026-08-02 核实官方: Qwen3.8-Max-Preview (2026-07-19) 为当前最新旗舰
+    #   - 2.4万亿参数 MoE, 100万上下文, 双推理模式(思考/快速), $1.50/$5.00
+    #   - Qwen3.7 (2026-05) / Qwen3.6 系列仍在售; qwen3-max 正式版(快照 2026-01-23)在售
     {"provider": "dashscope", "label": "阿里云通义千问 (DashScope)", "models": [
+        # —— Qwen3.8-Max-Preview 当前最新旗舰(2026-07-19, 2.4万亿MoE) ——
+        "dashscope/qwen3.8-max-preview",
         # —— Qwen3.7 当前主力(2026-05) ——
         "dashscope/qwen3.7-max",
         "dashscope/qwen3.7-plus",
-        # —— Qwen3.6 系列 ——
+        # —— Qwen3.6 系列(仍在售) ——
         "dashscope/qwen3.6-max-preview",
         "dashscope/qwen3.6-plus",
         "dashscope/qwen3.6-flash",
@@ -405,8 +428,10 @@ PROVIDER_PRESETS = [
         "openrouter/openai/gpt-5.6-terra",
         "openrouter/openai/gpt-5.6-luna",
         "openrouter/openai/gpt-5.5",
+        "openrouter/google/gemini-3.6-flash",
         "openrouter/google/gemini-3.1-pro",
         "openrouter/google/gemini-3.1-flash",
+        "openrouter/xai/grok-4.5",
         "openrouter/meta-llama/llama-3.3-70b-instruct",
         "openrouter/deepseek/deepseek-v4-flash",
         "openrouter/qwen/qwen-3.6",

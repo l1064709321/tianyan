@@ -58,7 +58,14 @@
 
 ## 🚀 快速开始(3 步搞定)
 
-### 第 1 步:启动服务
+### 第 1 步:克隆仓库
+
+```bash
+git clone https://github.com/l1064709321/tianyan.git
+cd tianyan
+```
+
+### 第 2 步:启动服务
 
 **Windows**: 双击 `tianyan.bat`
 
@@ -72,18 +79,15 @@ chmod +x tianyan.sh
 
 > **代码已经打包进 Docker 镜像里了。** `docker-compose up -d --build` 构建时,所有源码会被 `COPY . .` 复制进镜像,编译为 `.pyc` 后删除 `.py` 源文件(代码保护)。你不需要在容器外保留源码,也不需要挂载代码目录,镜像里自带完整应用。
 
-### 第 2 步:打开浏览器
-
-启动完成后,访问 `http://localhost:8000`
-
 ### 第 3 步:在前端界面填入 API Key
 
 **不需要手动编辑 `.env` 文件!** 前端界面自带密钥配置功能:
 
-1. 点击页面右上角 **设置** 按钮
-2. 选择 **添加模型**
-3. 填入 API Key 和模型信息
-4. 保存即可,密钥会自动持久化,重启不丢失
+1. 打开浏览器访问 `http://localhost:8000`
+2. 点击页面右上角 **设置** 按钮
+3. 选择 **添加模型**
+4. 填入 API Key 和模型信息
+5. 保存即可,密钥会自动持久化,重启不丢失
 
 前端填入的密钥优先级高于 `.env` 文件,两者配一个就行。
 
@@ -290,7 +294,8 @@ chmod +x tianyan.sh
 ### 手动启动(已安装 Docker)
 
 ```bash
-# 1. 进入项目目录
+# 1. 克隆仓库
+git clone https://github.com/l1064709321/tianyan.git
 cd tianyan
 
 # 2. 启动 (首次约 2-3 分钟构建镜像)
@@ -304,7 +309,8 @@ docker-compose up -d --build
 ### 本地开发(不使用 Docker)
 
 ```bash
-# 1. 进入项目目录
+# 1. 克隆仓库
+git clone https://github.com/l1064709321/tianyan.git
 cd tianyan
 
 # 2. 装依赖

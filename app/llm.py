@@ -43,21 +43,39 @@ def _get_http_client():
     timeout=None: 彻底关闭 HTTP 超时, 让 LLM 思考多久都不被掐断
     max_keepalive_connections=20: 复用连接, 避免每次 new
     max_connections=50: 并行工具调用不抢占主连接池
+    proxy: 从 config 读取, 解决国内访问 OpenAI/Gemini 连接不上
     """
     global _global_http_client
     if _global_http_client is not None:
         return _global_http_client
     if httpx is None:
         return None
-    _global_http_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(None),  # 彻底关闭超时
-        limits=httpx.Limits(
+    # 读取代理配置 (config.yaml 或环境变量)
+    proxy_url = None
+    try:
+        from .config import get_settings
+        s = get_settings()
+        proxy_url = s.proxy
+    except Exception:
+        pass
+    # 环境变量兜底
+    if not proxy_url:
+        proxy_url = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or None
+    
+    client_kwargs = {
+        "timeout": httpx.Timeout(None),  # 彻底关闭超时
+        "limits": httpx.Limits(
             max_keepalive_connections=20,
             max_connections=50,
             keepalive_expiry=120,  # 连接保活 2 分钟
         ),
-    )
-    logger.info("[LLM] 全局 httpx 连接池已初始化 (timeout=None, keepalive=20, max=50)")
+    }
+    if proxy_url:
+        client_kwargs["proxy"] = proxy_url
+        logger.info(f"[LLM] 全局 httpx 连接池已初始化 (timeout=None, keepalive=20, max=50, proxy={proxy_url})")
+    else:
+        logger.info("[LLM] 全局 httpx 连接池已初始化 (timeout=None, keepalive=20, max=50, 无代理)")
+    _global_http_client = httpx.AsyncClient(**client_kwargs)
     return _global_http_client
 
 from .config import ModelConfig
@@ -289,3 +307,92 @@ async def stream(
     except Exception as e:
         logger.error(f"[LLM stream] 流式中途断开: {e}", exc_info=True)
         raise LLMError(f"LLM 流式中途断开: {e}") from e
+
+
+def _friendly_error(e: Exception, cfg: ModelConfig) -> str:
+    """把底层异常翻译成用户能看懂的中文提示。
+
+    分类:
+    - 认证错误 (401/403): API Key 问题
+    - 网络错误 (连接超时/拒绝/代理): 网络问题, 提示检查代理/防火墙
+    - 限流 (429): 稍后重试
+    - 模型不存在 (404): 模型名拼写错误或该 provider 无此模型
+    - 其他: 原始错误
+    """
+    err_str = str(e).lower()
+    provider = cfg.model.split("/")[0] if "/" in cfg.model else ""
+
+    if any(kw in err_str for kw in ("401", "403", "invalid api key", "unauthorized", "forbidden")):
+        return (
+            f"API Key 无效或权限不足。请检查:\n"
+            f"  1. {provider} 的 API Key 是否正确\n"
+            f"  2. Key 是否过期或被禁用\n"
+            f"  3. 账户是否有余额/配额\n"
+            f"原始错误: {e}"
+        )
+    if any(kw in err_str for kw in ("429", "rate limit", "quota", "too many requests")):
+        return (
+            f"请求频率超限或配额用完。请:\n"
+            f"  1. 等几秒后重试\n"
+            f"  2. 检查 {provider} 账户余额/配额\n"
+            f"原始错误: {e}"
+        )
+    if any(kw in err_str for kw in ("404", "model_not_found", "not found", "does not exist")):
+        return (
+            f"模型不存在: {cfg.model}\n"
+            f"  1. 检查模型名拼写是否正确\n"
+            f"  2. 该 provider 是否有此模型\n"
+            f"  3. 常见正确格式: deepseek/deepseek-v4-flash, openai/gpt-5.5\n"
+            f"原始错误: {e}"
+        )
+    if any(kw in err_str for kw in ("connection", "timeout", "timed out", "refused",
+                                      "unreachable", "proxy", "ssl", "certificate")):
+        proxy_hint = ""
+        try:
+            from .config import get_settings
+            s = get_settings()
+            if s.proxy:
+                proxy_hint = f"\n  当前代理: {s.proxy} (如代理不可用请关闭)"
+            else:
+                proxy_hint = (
+                    "\n  国内访问 OpenAI/Gemini/Anthropic 需要代理。\n"
+                    "  解决方法: 在 config.yaml 中设置 proxy: http://127.0.0.1:7890\n"
+                    "  或设置环境变量: set HTTPS_PROXY=http://127.0.0.1:7890\n"
+                    "  推荐用 DeepSeek/通义/智谱等国内模型, 无需代理。"
+                )
+        except Exception:
+            pass
+        return (
+            f"网络连接失败，无法访问 {provider} API。\n"
+            f"  1. 检查网络是否正常\n"
+            f"  2. 检查防火墙是否拦截{proxy_hint}\n"
+            f"原始错误: {e}"
+        )
+    return str(e)
+
+
+async def test_connection(cfg: ModelConfig) -> dict:
+    """测试模型连接是否正常。返回 {"ok": bool, "message": str}。
+
+    发一个最简单的请求 (1 token), 快速验证 Key + 网络 + 模型名是否正确。
+    """
+    if litellm is None:
+        return {"ok": False, "message": "litellm 未安装, 请运行 pip install litellm"}
+    try:
+        norm_model = _prepare_env(cfg)
+        kwargs: dict[str, Any] = {
+            "model": norm_model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            "timeout": 15,  # 测试用短超时, 15s 够了
+        }
+        _client = _get_http_client()
+        if _client is not None:
+            kwargs["client"] = _client
+        resp = await litellm.acompletion(**kwargs)
+        # 能拿到响应就说明连接正常
+        model_name = getattr(resp, "model", cfg.model)
+        return {"ok": True, "message": f"连接成功! 模型: {model_name}"}
+    except Exception as e:
+        friendly = _friendly_error(e, cfg)
+        return {"ok": False, "message": friendly}

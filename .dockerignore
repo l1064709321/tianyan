@@ -9,3 +9,19 @@ export/
 .env
 *.pid
 na-server.log
+# Docker 文件本身不需要进镜像
+Dockerfile
+docker-compose.yml
+.dockerignore
+# 开发工具文件
+.idea/
+.vscode/
+.python-version
+screenshots/
+# 测试文件
+test_browser.py
+# 补丁文件
+*.patch
+# 临时文件
+na
+na.bat

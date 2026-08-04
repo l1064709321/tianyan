@@ -69,6 +69,11 @@ class Settings:
     retrieve_k: int = 6
     server_host: str = "0.0.0.0"
     server_port: int = 8000
+    # ===== 新增: HTTP 代理配置 (解决国内访问 OpenAI/Gemini 连接不上) =====
+    # 留空 = 不用代理 (直连)
+    # 填 "http://127.0.0.1:7890" = 走本地代理 (Clash/V2Ray 常用端口)
+    # 也可通过环境变量 HTTP_PROXY / HTTPS_PROXY 设置
+    proxy: Optional[str] = None
 
 
 def _load_yaml(path: str) -> dict:
@@ -102,7 +107,9 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     _config_path = path
     raw = _load_yaml(path)
 
-    data_dir = raw.get("data_dir", os.path.expanduser("~/.novel-agent"))
+    data_dir = raw.get("data_dir") or os.environ.get(
+        "NOVEL_AGENT_DATA_DIR", os.path.expanduser("~/.novel-agent")
+    )
     os.makedirs(data_dir, exist_ok=True)
     upload_dir = os.path.join(data_dir, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
@@ -111,6 +118,9 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     models = [_model_from_dict(m) for m in raw.get("models", [])]
     if not models:
         models = [default_model]
+
+    # proxy: 优先 yaml 配置, 其次环境变量
+    proxy = raw.get("proxy") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or None
 
     s = Settings(
         data_dir=data_dir,
@@ -125,6 +135,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         retrieve_k=int(raw.get("retrieve_k", 6)),
         server_host=raw.get("server_host", "0.0.0.0"),
         server_port=int(raw.get("server_port", 8000)),
+        proxy=proxy,
     )
     return s
 

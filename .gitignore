@@ -10,6 +10,8 @@ env/
 
 # 运行时数据与配置 (含密钥,不上传)
 config.yaml
+# .env 文件含真实 API Key, 绝对不上传 (.env.example 是模板可以上传)
+.env
 # data/ 屏蔽根目录运行时数据,但保留 app/data (技能语料库 + skills_core.py 内核,必须上传)
 /data/
 /*.db

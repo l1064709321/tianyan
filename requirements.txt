@@ -1,31 +1,49 @@
+# ========================================
+# 天衍 - 依赖清单
+# ========================================
+# 核心依赖 (必装, 全平台纯 Python, 无需 C 编译器)
+# ========================================
 fastapi>=0.110
 uvicorn>=0.27
 litellm>=1.40
+openai>=1.0
 pydantic>=2.6
 pydantic-settings>=2.2
 PyYAML>=6.0
 python-multipart>=0.0.9
+httpx>=0.27
+python-dotenv>=1.0
 
-# ===== 高性能组件 (按平台自动选择, 用户无需干预) =====
-# Linux/macOS: 装 uvloop + httptools (C 扩展, HTTP 性能提升 2-3x)
+# ========================================
+# 文件格式支持 (纯 Python, Windows 友好)
+# ========================================
+python-docx>=1.1
+pypdf>=4.0
+ebooklib>=0.18
+beautifulsoup4>=4.12
+Markdown>=3.5
+
+# ========================================
+# 记忆系统 (多项目隔离)
+# PostgreSQL: 项目/角色/章节持久化 (不可用时降级到 SQLite)
+# Redis: 短期对话记忆 (不可用时降级到内存)
+# ChromaDB: 向量语义检索 (不可用时降级到关键词检索)
+# ========================================
+redis>=5.0
+psycopg2-binary>=2.9
+chromadb>=0.4
+
+# ========================================
+# 沙箱安全 (代码执行隔离)
+# RestrictedPython: Python 级代码预检
+# 注: pypy3 是系统级安装 (Dockerfile 中通过 apt 安装), 不在 pip
+# ========================================
+RestrictedPython>=7.0
+# 注: pypy3 是系统级安装 (Dockerfile 中通过 apt 安装), 不在 pip 中
+# pypy3-restricted 包在 PyPI 上不存在, pypy3 由 Dockerfile apt install 提供
+
+# ========================================
+# 高性能组件 (仅 Linux/macOS, Windows 自动跳过)
+# ========================================
 uvloop>=0.14; sys_platform != 'win32'
 httptools>=0.5; sys_platform != 'win32'
-
-# ===== 文件读取 =====
-python-docx>=1.1          # .docx
-pypdf>=4.0                # .pdf
-ebooklib>=0.18            # .epub
-beautifulsoup4>=4.12      # epub 内 html 解析
-Markdown>=3.5             # .md 渲染
-
-# 文件导出
-# docx 复用 python-docx;html 用 Markdown;pdf 由前端打印
-
-# ===== 联网抓取 =====
-httpx>=0.27               # 通用 HTTP 客户端 (web_fetch / web_search)
-readability-lxml>=0.8     # 网页正文提取
-lxml>=5.0                 # HTML 解析 (BeautifulSoup 后端)
-playwright>=1.40          # JS 渲染抓取 (browser_fetch: 起点/番茄等 SPA 榜单页)
-# 首次使用需下载 Chromium 内核 (内核是平台二进制, 装各平台系统目录, 不进项目):
-#   Linux/macOS: ./setup_browser.sh   (已固化国内镜像源, 下载快)
-#   Windows:     setup_browser.bat    (已固化国内镜像源, 下载快)

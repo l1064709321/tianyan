@@ -1,19 +1,93 @@
 version: "3.8"
 
 services:
+  # ============================================================
+  # 天衍主服务
+  # ============================================================
   tianyan:
     build: .
     container_name: tianyan
     ports:
       - "8000:8000"
     volumes:
-      # 数据持久化：项目/章节/设定存本地
+      # 数据持久化: 项目/章节/设定/向量索引存本地, 容器重建不丢
       - ./data:/data
-      # 配置文件挂载
-      - ~/.novel-agent:/root/.novel-agent:ro
+      # 日志持久化
+      - ./logs:/app/logs
     environment:
+      # 数据目录
       - NOVEL_AGENT_DATA_DIR=/data
-      # API Key 通过环境变量注入（也可通过挂载的 config.yaml 配置）
-      # - DEEPSEEK_API_KEY=sk-xxx
-      # - OPENAI_API_KEY=sk-xxx
+      # ===== API Key: 从 .env 文件自动读取 =====
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_BASE=${OPENAI_API_BASE:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - ZAI_API_KEY=${ZAI_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+      - XAI_API_KEY=${XAI_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - VOLCENGINE_API_KEY=${VOLCENGINE_API_KEY:-}
+      # 自定义模型配置
+      - CUSTOM_API_KEY=${CUSTOM_API_KEY:-}
+      - CUSTOM_BASE_URL=${CUSTOM_BASE_URL:-}
+      - CUSTOM_MODEL_NAME=${CUSTOM_MODEL_NAME:-}
+      # 沙箱配置
+      - SANDBOX_ENABLED=${SANDBOX_ENABLED:-true}
+      - SANDBOX_TIMEOUT=${SANDBOX_TIMEOUT:-30}
+      # 记忆系统
+      - MEMORY_ENABLED=${MEMORY_ENABLED:-true}
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://tianyan:tianyan123@postgres:5432/tianyan
+      - CHROMA_PATH=/data/chroma
+      # HTTP 代理
+      - HTTP_PROXY=${PROXY:-}
+      - HTTPS_PROXY=${PROXY:-}
+      # 通用
+      - TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-600}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
+
+  # ============================================================
+  # PostgreSQL — 项目/角色/章节持久化
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: tianyan-postgres
+    environment:
+      POSTGRES_USER: tianyan
+      POSTGRES_PASSWORD: tianyan123
+      POSTGRES_DB: tianyan
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tianyan"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================
+  # Redis — 短期对话记忆 (每个项目独立)
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: tianyan-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

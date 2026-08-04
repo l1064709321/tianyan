@@ -16,7 +16,6 @@ import re
 from typing import Any, Optional
 
 import httpx
-from bs4 import BeautifulSoup
 
 from . import store
 from .config import get_settings
@@ -25,6 +24,19 @@ from .llm import chat, stream
 
 
 # ---------------- 通用辅助 ----------------
+
+def _get_bs4():
+    """惰性导入 BeautifulSoup。bs4 是可选依赖 (仅 web_fetch/web_search 需要)。
+    未安装时返回 None, 调用方应返回友好错误而非崩溃。
+    核心 agent 功能 (大纲/续写/润色/设定等) 不依赖 bs4。
+    """
+    try:
+        from bs4 import BeautifulSoup
+        return BeautifulSoup
+    except ImportError:
+        return None
+
+
 def _project_brief(pid: str) -> str:
     p = store.get_project(pid) or {}
     parts = []
@@ -2195,7 +2207,19 @@ async def _web_fetch(url: str, max_chars: int = 8000) -> dict:
     except Exception as e:
         return {"error": f"请求失败: {e}", "url": url}
 
-    soup = BeautifulSoup(html, "lxml")
+    # 惰性导入 BeautifulSoup (bs4 是可选依赖, 仅网页抓取需要)
+    BS = _get_bs4()
+    if BS is None:
+        return {
+            "error": "网页抓取需要 beautifulsoup4 库。请运行: pip install beautifulsoup4",
+            "url": url,
+        }
+
+    # 优先用 lxml 解析 (快), 失败则用 html.parser (纯 Python, 无需编译)
+    try:
+        soup = BS(html, "lxml")
+    except Exception:
+        soup = BS(html, "html.parser")
 
     # 优先用 readability 提取正文
     try:
@@ -2203,7 +2227,7 @@ async def _web_fetch(url: str, max_chars: int = 8000) -> dict:
         doc = Document(html)
         title = doc.title() or soup.title.string or ""
         text = doc.summary()
-        text_soup = BeautifulSoup(text, "lxml")
+        text_soup = BS(text, "html.parser")
         main_text = text_soup.get_text(separator="\n", strip=True)
     except Exception:
         # 回退: 去掉 script/style/nav/footer/header, 提取 body 文本
@@ -2245,7 +2269,13 @@ async def _web_search(query: str, max_results: int = 8) -> dict:
     except Exception as e:
         return {"error": f"搜索失败: {e}", "query": query}
 
-    soup = BeautifulSoup(html, "lxml")
+    BS = _get_bs4()
+    if BS is None:
+        return {
+            "error": "网页搜索需要 beautifulsoup4 库。请运行: pip install beautifulsoup4",
+            "query": query,
+        }
+    soup = BS(html, "lxml")
     results = []
     # Bing 搜索结果结构: li.b_algo > h2 > a
     for item in soup.select("li.b_algo"):

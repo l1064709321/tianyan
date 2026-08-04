@@ -32,6 +32,19 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup() -> None:
     store.init_db()
+    # 启动时检查 API Key 配置状态, 未配置则打印友好提示
+    s = get_settings()
+    if not _model_ready(s.default_model):
+        print("\n" + "=" * 60)
+        print("⚠️  当前模型尚未配置 API Key!")
+        print(f"   默认模型: {s.default_model.model}")
+        print("   配置方式 (任选其一):")
+        print("     1. 在 Web 界面右上角 ⚙️ 设置 → 添加模型 → 填入 API Key")
+        print("     2. 在 .env 文件中设置环境变量 (如 DEEPSEEK_API_KEY=sk-xxx)")
+        print("        参考 .env.example 模板")
+        print("     3. 在 config.yaml 中填写 api_key 字段")
+        print("   推荐用 DeepSeek (国内直连, 无需代理): https://platform.deepseek.com")
+        print("=" * 60 + "\n")
 
 
 # ---------- projects ----------
@@ -397,6 +410,45 @@ def switch_model(body: ModelSwitch):
     set_default_model(body.model)
     s = get_settings()
     return {"default": s.default_model.model, "ready": _model_ready(s.default_model)}
+
+
+# ---------- 连接测试 (前端"测试连接"按钮用) ----------
+class TestConnIn(BaseModel):
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+
+
+@app.post("/api/config/test-connection")
+async def test_connection(body: TestConnIn):
+    """测试模型连接是否正常。发一个 1-token 请求快速验证。
+
+    不传 model 则用当前默认配置。返回 {ok, message}。
+    """
+    from .llm import test_connection as _test
+    from .config import ModelConfig
+
+    s = get_settings()
+    if body.model:
+        # 用传入的参数构建临时配置
+        # 如果只传了 model 名, 从已有 models 列表里找 key/base
+        api_key = body.api_key
+        api_base = body.api_base
+        if not api_key:
+            for m in s.models:
+                if m.model == body.model:
+                    api_key = m.api_key
+                    api_base = m.api_base
+                    break
+        cfg = ModelConfig(
+            model=body.model,
+            api_key=api_key,
+            api_base=api_base,
+        )
+    else:
+        cfg = s.default_model
+    result = await _test(cfg)
+    return result
 
 
 # ---------- 完整设置 (右侧面板用) ----------

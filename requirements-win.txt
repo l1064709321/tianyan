@@ -1,10 +1,23 @@
 # ========================================
-# 天衍 - Windows 精简依赖 (核心功能)
+# 天衍 - Windows 完整依赖
 # ========================================
 # 安装: pip install -r requirements-win.txt
+# 
+# 已去掉 Windows 下装不动的包:
+#   - uvloop / httptools (仅 Linux/macOS, C 扩展)
+#   - chromadb (需要 CMake + Rust 编译)
+#   - psycopg2-binary (需要 C 编译器)
+#   - RestrictedPython (非核心)
+#   - playwright (需要额外下载浏览器内核)
+#
+# 核心功能全部正常, 降级方案:
+#   - 向量检索 → 关键词检索
+#   - PostgreSQL → SQLite/内存
+#   - Redis → 内存
+#   - 代码沙箱 → 不执行用户代码
 # ========================================
 
-# 核心 (必装)
+# ---- 核心 (必装) ----
 fastapi>=0.110
 uvicorn>=0.27
 litellm>=1.40
@@ -16,9 +29,25 @@ python-multipart>=0.0.9
 httpx>=0.27
 python-dotenv>=1.0
 
-# 文件格式支持
+# ---- 文件格式支持 ----
 python-docx>=1.1
 pypdf>=4.0
 ebooklib>=0.18
 beautifulsoup4>=4.12
 Markdown>=3.5
+
+# ---- 网页抓取 ----
+readability-lxml>=0.8
+lxml>=5.0
+
+# ---- 记忆/向量 (可选, 装不了可跳过) ----
+# redis>=5.0
+# psycopg2-binary>=2.9
+# chromadb>=0.4
+
+# ---- 高性能 (仅 Linux/macOS) ----
+# uvloop>=0.14
+# httptools>=0.5
+
+# ---- 浏览器抓取 (需要额外安装内核) ----
+# playwright>=1.40

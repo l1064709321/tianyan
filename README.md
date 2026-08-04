@@ -9,7 +9,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-blueviolet)](https://www.gnu.org/licenses/agpl-3.0.html)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0-red)](https://www.gnu.org/licenses/gpl-3.0.html)
 ---
-
+# ｛版本还在迭代中测试，如果有问题，请第一时间进行反馈。｝
 ## ✨ 核心特性
 
 ### 5 阶段写作流水线(强制全流程)

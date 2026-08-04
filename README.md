@@ -56,6 +56,39 @@
 
 ---
 
+## 🚀 快速开始(3 步搞定)
+
+### 第 1 步:启动服务
+
+**Windows**: 双击 `tianyan.bat`
+
+**Linux / macOS**:
+```bash
+chmod +x tianyan.sh
+./tianyan.sh
+```
+
+脚本会自动检测 Docker → 未安装则自动安装 → 构建镜像 → 启动容器。
+
+> **代码已经打包进 Docker 镜像里了。** `docker-compose up -d --build` 构建时,所有源码会被 `COPY . .` 复制进镜像,编译为 `.pyc` 后删除 `.py` 源文件(代码保护)。你不需要在容器外保留源码,也不需要挂载代码目录,镜像里自带完整应用。
+
+### 第 2 步:打开浏览器
+
+启动完成后,访问 `http://localhost:8000`
+
+### 第 3 步:在前端界面填入 API Key
+
+**不需要手动编辑 `.env` 文件!** 前端界面自带密钥配置功能:
+
+1. 点击页面右上角 **设置** 按钮
+2. 选择 **添加模型**
+3. 填入 API Key 和模型信息
+4. 保存即可,密钥会自动持久化,重启不丢失
+
+前端填入的密钥优先级高于 `.env` 文件,两者配一个就行。
+
+---
+
 ## 📋 目录
 
 1. [Docker 安装指导](#1-docker-安装指导)
@@ -65,6 +98,7 @@
 5. [多项目记忆隔离说明](#5-多项目记忆隔离说明)
 6. [沙箱安全说明](#6-沙箱安全说明)
 7. [常用命令](#7-常用命令)
+8. [Docker 镜像内部结构](#8-docker-镜像内部结构)
 
 ---
 
@@ -151,7 +185,18 @@ sudo systemctl restart docker  # Linux
 
 ## 2. 环境变量配置说明
 
-### 快速配置
+### 两种配置方式(任选其一)
+
+| 方式 | 适用场景 | 操作 |
+|------|---------|------|
+| **前端界面填入(推荐)** | 大多数用户 | 启动后在网页右上角 设置 → 添加模型 |
+| **.env 文件配置** | 批量预配 / CI/CD | `cp .env.example .env` 后编辑 |
+
+两种方式可以共存,前端填入的密钥优先级更高。
+
+### .env 文件配置(可选)
+
+如果偏好用 `.env` 文件:
 
 ```bash
 cp .env.example .env
@@ -163,7 +208,7 @@ cp .env.example .env
 | 变量名 | 说明 | 默认值 | 必填 |
 |--------|------|--------|------|
 | **模型配置** | | | |
-| `OPENAI_API_KEY` | DeepSeek/OpenAI API Key | - | 是(任选一个) |
+| `OPENAI_API_KEY` | DeepSeek/OpenAI API Key | - | 否(前端可填) |
 | `OPENAI_BASE_URL` | API 基础 URL | `https://api.deepseek.com/v1` | 否 |
 | `OPENAI_MODEL` | 默认模型名 | `deepseek-chat` | 否 |
 | `CUSTOM_API_KEY` | 自定义模型 Key(优先级更高) | - | 否 |
@@ -221,7 +266,7 @@ tianyan.bat
 脚本执行流程:
 1. 检测 Docker → 未安装则自动下载(清华镜像优先,10分钟超时切国外源)
 2. 安装 Docker Desktop → 启动 → 等待引擎就绪
-3. 检测 `.env` → 不存在则从 `.env.example` 复制
+3. 检测 `.env` → 不存在则从 `.env.example` 复制(可后续在前端界面填密钥)
 4. 执行 `docker-compose up -d --build`
 5. 自动打开浏览器访问 `http://localhost:8000`
 
@@ -238,32 +283,28 @@ chmod +x tianyan.sh
 脚本执行流程:
 1. 检测 Docker → 未安装则自动安装(阿里云镜像优先,10分钟超时切官方源)
 2. 检测 docker-compose → 未安装则自动下载
-3. 检测 `.env` → 不存在则从 `.env.example` 复制
+3. 检测 `.env` → 不存在则从 `.env.example` 复制(可后续在前端界面填密钥)
 4. 执行 `docker-compose up -d --build`
 5. 自动打开浏览器访问 `http://localhost:8000`
 
 ### 手动启动(已安装 Docker)
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/l1064709321/tianyan.git
+# 1. 进入项目目录
 cd tianyan
 
-# 2. 配置环境变量
-cp .env.example .env
-# 编辑 .env 填入 API Key
-
-# 3. 启动 (首次约 2-3 分钟构建)
+# 2. 启动 (首次约 2-3 分钟构建镜像)
+#    .env 不是必须的, 可以启动后在网页界面填密钥
 docker-compose up -d --build
 
-# 4. 访问 http://localhost:8000
+# 3. 访问 http://localhost:8000
+# 4. 在网页右上角 设置 → 添加模型 → 填入 API Key
 ```
 
 ### 本地开发(不使用 Docker)
 
 ```bash
-# 1. 克隆
-git clone https://github.com/l1064709321/tianyan.git
+# 1. 进入项目目录
 cd tianyan
 
 # 2. 装依赖
@@ -273,6 +314,9 @@ pip install -r requirements.txt
 python run.py
 # 或
 python boot.py
+
+# 4. 访问 http://localhost:8000
+# 5. 在网页界面填入 API Key
 ```
 
 ---
@@ -412,7 +456,7 @@ POST   /api/projects/{project_id}/chat       # 发送消息(自动关联记忆)
 ### 配置
 
 ```bash
-# .env 中配置
+# .env 中配置 (可选)
 SANDBOX_ENABLED=true    # 启用沙箱 (false 则完全禁用代码执行)
 SANDBOX_TIMEOUT=30      # 超时秒数 (默认 30 秒)
 ```
@@ -518,6 +562,65 @@ rm -rf ./data/*
 
 ---
 
+## 8. Docker 镜像内部结构
+
+### 代码已经打包进镜像
+
+项目源码在构建镜像时已经打包进去,不需要在宿主机保留源码:
+
+```
+Docker 镜像内部 (/app)
+├── boot.py              ← 唯一保留的 .py 源文件 (启动入口)
+├── venv/                ← Python 虚拟环境 (所有依赖装在这里)
+│   └── bin/python
+├── app/
+│   ├── __init__.py      ← 保留 (包标识)
+│   ├── agents.pyc       ← 编译后的字节码 (源码已删除)
+│   ├── tools.pyc
+│   ├── agent.pyc
+│   ├── llm.pyc
+│   ├── config.pyc
+│   ├── store.pyc
+│   ├── server.pyc
+│   ├── sandbox.pyc
+│   ├── memory_manager.pyc
+│   └── ... (其他 .pyc)
+├── web/                 ← 前端文件 (HTML/CSS/JS 不编译)
+│   ├── index.html
+│   ├── app.js
+│   └── style.css
+└── data/                ← 数据目录 (挂载到宿主机, 持久化)
+```
+
+### 构建流程
+
+```
+COPY requirements.txt → pip install (清华镜像)
+        ↓
+COPY . .              → 复制全部源码到 /app
+        ↓
+compileall -b         → 编译 .py 为 .pyc
+        ↓
+删除 .py 源文件        → 只保留 boot.py 和 __init__.py
+        ↓
+useradd appuser       → 创建非 root 用户
+        ↓
+CMD ["python", "boot.py"]  → 启动服务
+```
+
+### 数据持久化
+
+以下数据通过 volume 挂载到宿主机,容器重建不丢失:
+
+| 容器路径 | 宿主机路径 | 内容 |
+|---------|-----------|------|
+| `/data` | `./data` | 项目数据、向量索引、用户配置 |
+| `/app/logs` | `./logs` | 应用日志 |
+
+**注意**:代码本身不在挂载列表里,代码在镜像内,更新代码需要重新构建镜像(`docker-compose up -d --build`)。
+
+---
+
 ## 📁 项目结构
 
 ```
@@ -540,7 +643,7 @@ tianyan/
 │   └── style.css           # UI 样式
 ├── Dockerfile              # Docker 构建文件
 ├── docker-compose.yml      # 多容器编排(app + postgres + redis)
-├── .env.example            # 环境变量模板
+├── .env.example            # 环境变量模板 (可选, 前端界面也能填)
 ├── .dockerignore           # Docker 构建排除
 ├── boot.py                 # 容器启动入口
 ├── requirements.txt        # Python 依赖
@@ -566,6 +669,7 @@ tianyan/
 ## 📝 使用建议
 
 - **推荐模型**:DeepSeek(国内直连、便宜、中文好);预算充足可用 GPT 或 Gemini
+- **密钥配置**:直接在前端界面右上角 设置 → 添加模型 里填,不用碰 .env 文件
 - **字数控制**:续写时可在指令里指定字数,如「续写 3000 字,重点写主角心理」
 - **多项目管理**:为不同类型的项目创建独立项目,Agent 会自动切换风格
 - **本地模型**:装 Ollama 后 `ollama pull qwen3:14b`,无需 API Key

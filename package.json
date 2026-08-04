@@ -1,13 +1,33 @@
 {
   "name": "tianyan",
   "version": "1.0.0",
-  "description": "天衍 - 多Agent协同小说创作系统",
+  "description": "天衍 - 多Agent协同小说创作系统, 7个专家Agent, 5阶段写作流水线, 33维审计, 111位白金作家语料库",
+  "main": "run.py",
   "scripts": {
-    "install": "node scripts/install.js",
+    "postinstall": "node scripts/install.js",
     "start": "node scripts/start.js",
     "setup": "node scripts/install.js"
   },
-  "keywords": ["novel", "ai", "agent", "writing"],
+  "keywords": [
+    "novel",
+    "ai",
+    "agent",
+    "writing",
+    "multi-agent",
+    "creative-writing",
+    "chinese-novel"
+  ],
   "author": "tianyan",
-  "license": "AGPL-3.0"
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/l1064709321/tianyan.git"
+  },
+  "bugs": {
+    "url": "https://github.com/l1064709321/tianyan/issues"
+  },
+  "homepage": "https://github.com/l1064709321/tianyan#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  }
 }

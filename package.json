@@ -1,0 +1,13 @@
+{
+  "name": "tianyan",
+  "version": "1.0.0",
+  "description": "天衍 - 多Agent协同小说创作系统",
+  "scripts": {
+    "install": "node scripts/install.js",
+    "start": "node scripts/start.js",
+    "setup": "node scripts/install.js"
+  },
+  "keywords": ["novel", "ai", "agent", "writing"],
+  "author": "tianyan",
+  "license": "AGPL-3.0"
+}

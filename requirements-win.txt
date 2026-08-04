@@ -1,20 +1,12 @@
 # ========================================
-# 天衍 - Windows 完整依赖
+# 天衍 - Windows 依赖 (完整版)
 # ========================================
 # 安装: pip install -r requirements-win.txt
 # 
-# 已去掉 Windows 下装不动的包:
-#   - uvloop / httptools (仅 Linux/macOS, C 扩展)
-#   - chromadb (需要 CMake + Rust 编译)
-#   - psycopg2-binary (需要 C 编译器)
-#   - RestrictedPython (非核心)
-#   - playwright (需要额外下载浏览器内核)
-#
-# 核心功能全部正常, 降级方案:
-#   - 向量检索 → 关键词检索
-#   - PostgreSQL → SQLite/内存
-#   - Redis → 内存
-#   - 代码沙箱 → 不执行用户代码
+# Windows 兼容说明:
+#   - uvloop/httptools: 仅 Linux/macOS, 已跳过
+#   - psycopg2-binary: 需要 C 编译器, 用 SQLite 替代
+#   - playwright: 需要额外下载浏览器内核, 按需安装
 # ========================================
 
 # ---- 核心 (必装) ----
@@ -40,14 +32,18 @@ Markdown>=3.5
 readability-lxml>=0.8
 lxml>=5.0
 
-# ---- 记忆/向量 (可选, 装不了可跳过) ----
+# ---- 向量语义检索 (需要) ----
+chromadb>=0.4
+
+# ---- 记忆系统 ----
+# Redis: 对话短期记忆, Windows 可选
 # redis>=5.0
+# PostgreSQL: 项目持久化, 用 SQLite 替代 (store.py 已支持)
 # psycopg2-binary>=2.9
-# chromadb>=0.4
 
-# ---- 高性能 (仅 Linux/macOS) ----
-# uvloop>=0.14
-# httptools>=0.5
+# ---- 沙箱安全 ----
+RestrictedPython>=7.0
 
-# ---- 浏览器抓取 (需要额外安装内核) ----
+# ---- 浏览器抓取 (按需) ----
 # playwright>=1.40
+# 安装后需要: playwright install chromium

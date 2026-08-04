@@ -159,7 +159,7 @@ def match_author(genre: str, style: str = "", premise: str = "", audience: str =
             "technique": m.get("technique", ""),
             "sentence_style": m.get("sentence_style", ""),
             "common_words": m.get("common_words", []),
-            "has_corpus": bool(CorpusLoader().get_passages(author, limit=1)),
+            "has_corpus": bool(get_corpus_loader().get_passages(author, limit=1)),
         })
     return result
 

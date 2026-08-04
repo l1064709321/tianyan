@@ -102,8 +102,14 @@ def audit_novel(text: str, outline: Optional[str] = None) -> dict:
     if sk is None:
         return {"error": "技能内核未加载", **skill_status()}
     try:
-        report = sk.audit(text, outline)
-        return {"audit_report": report, "text_length": len(text)}
+        # 调用 auditor.audit() 拿结构化字典, 再 format_report() 拿可读文本
+        raw_report = sk.auditor.audit(text, outline)
+        formatted = sk.auditor.format_report(raw_report)
+        return {
+            "audit_report": raw_report,         # 结构化字典 (含 issues/highlights/scores)
+            "audit_text": formatted,             # 可读文本报告
+            "text_length": len(text),
+        }
     except Exception as e:
         return {"error": f"审计失败: {e}"}
 
@@ -117,8 +123,14 @@ def detect_ai(text: str) -> dict:
     if sk is None:
         return {"error": "技能内核未加载", **skill_status()}
     try:
-        report = sk.detect_ai(text)
-        return {"ai_detection_report": report, "text_length": len(text)}
+        # detector.detect() 返回 list[dict], format_report() 返回 str
+        issues = sk.detector.detect(text)
+        formatted = sk.detector.format_report(issues)
+        return {
+            "ai_issues": issues,                 # 结构化列表 (每项含 type/message/suggestion)
+            "ai_text": formatted,                 # 可读文本报告
+            "text_length": len(text),
+        }
     except Exception as e:
         return {"error": f"AI 检测失败: {e}"}
 
@@ -132,8 +144,14 @@ def diagnose_opening(text: str) -> dict:
     if sk is None:
         return {"error": "技能内核未加载", **skill_status()}
     try:
-        report = sk.diagnose_opening(text)
-        return {"opening_diagnosis": report, "text_length": len(text)}
+        # opener.diagnose() 返回 dict, format_report() 返回 str
+        raw_report = sk.opener.diagnose(text)
+        formatted = sk.opener.format_report(raw_report)
+        return {
+            "opening_report": raw_report,         # 结构化字典
+            "opening_text": formatted,             # 可读文本报告
+            "text_length": len(text),
+        }
     except Exception as e:
         return {"error": f"开篇诊断失败: {e}"}
 
@@ -269,6 +287,13 @@ def full_audit(text: str, outline: Optional[str] = None) -> dict:
         return {"error": "技能内核未加载", **skill_status()}
     try:
         result = sk.full_audit(text, outline)
-        return {"full_audit_report": result, "text_length": len(text)}
+        # result 含 audit(str), ai_flavor(str), audit_raw(dict), ai_raw(list)
+        return {
+            "audit_text": result.get("audit", ""),
+            "ai_text": result.get("ai_flavor", ""),
+            "audit_report": result.get("audit_raw", {}),
+            "ai_issues": result.get("ai_raw", []),
+            "text_length": len(text),
+        }
     except Exception as e:
         return {"error": f"完整审计失败: {e}"}

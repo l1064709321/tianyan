@@ -47,6 +47,7 @@ if !errorlevel! neq 0 (
 )
 
 :: 启动
+set LITELLM_LOCAL_MODEL_COST_MAP=True
 echo [2/2] 启动服务...
 echo.
 echo ========================================

@@ -1,15 +1,21 @@
 # ========================================
-# 天衍 - Windows 依赖 (完整版)
+# 天衍 - Windows 完整依赖
 # ========================================
 # 安装: pip install -r requirements-win.txt
 # 
-# Windows 兼容说明:
-#   - uvloop/httptools: 仅 Linux/macOS, 已跳过
-#   - psycopg2-binary: 需要 C 编译器, 用 SQLite 替代
-#   - playwright: 需要额外下载浏览器内核, 按需安装
+# 包含全部功能:
+#   - 大模型调用 (DeepSeek/OpenAI/Gemini 等)
+#   - 7 Agent 协同 + 5 阶段写作流水线
+#   - 技能内核 (审计/拆解/仿写/代笔)
+#   - 向量语义检索 (chromadb)
+#   - 项目数据持久化 (SQLite, 自动)
+#   - 对话记忆 (Redis/内存)
+#   - 网页抓取 (httpx + readability)
+#   - 文件读写 (txt/docx/pdf/epub)
+#   - 沙箱安全 (RestrictedPython)
 # ========================================
 
-# ---- 核心 (必装) ----
+# ---- 核心 ----
 fastapi>=0.110
 uvicorn>=0.27
 litellm>=1.40
@@ -21,7 +27,7 @@ python-multipart>=0.0.9
 httpx>=0.27
 python-dotenv>=1.0
 
-# ---- 文件格式支持 ----
+# ---- 文件格式 ----
 python-docx>=1.1
 pypdf>=4.0
 ebooklib>=0.18
@@ -32,18 +38,15 @@ Markdown>=3.5
 readability-lxml>=0.8
 lxml>=5.0
 
-# ---- 向量语义检索 (需要) ----
+# ---- 向量语义检索 ----
 chromadb>=0.4
 
 # ---- 记忆系统 ----
-# Redis: 对话短期记忆, Windows 可选
-# redis>=5.0
-# PostgreSQL: 项目持久化, 用 SQLite 替代 (store.py 已支持)
-# psycopg2-binary>=2.9
+redis>=5.0
+psycopg2-binary>=2.9
 
 # ---- 沙箱安全 ----
 RestrictedPython>=7.0
 
-# ---- 浏览器抓取 (按需) ----
-# playwright>=1.40
-# 安装后需要: playwright install chromium
+# ---- 浏览器抓取 (可选, 安装后需执行 playwright install chromium) ----
+playwright>=1.40

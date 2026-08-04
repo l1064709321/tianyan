@@ -33,39 +33,81 @@ REM ---------- 2. 安装 Docker ----------
 :install_docker
 echo ============================================================
 echo   开始下载 Docker Desktop for Windows
-echo   优先使用清华镜像源, 10 分钟超时后切换国外源
+echo   镜像源优先级: 清华 → 华为云 → 中科大 → 官方源
+echo   每个源超时 5 分钟, 失败后自动切换下一个
 echo ============================================================
 
 set "DOCKER_INSTALLER=%TEMP%\DockerDesktopInstaller.exe"
 
-REM 优先: 清华镜像
+REM --- 国内镜像源逐个尝试 ---
+
+REM [1] 清华镜像
 echo.
-echo [1/2] 尝试清华镜像下载...
-powershell -Command "$ProgressPreference='SilentlyContinue'; try { $task=Start-Job -ScriptBlock { param($u,$o) Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing } -ArgumentList 'https://mirrors.tuna.tsinghua.edu.cn/docker-ce/win/static/stable/x86_64/Docker%%20Desktop%%20Installer.exe','%DOCKER_INSTALLER%'; if(Wait-Job $task -Timeout 600){Receive-Job $task;Remove-Job $task;exit 0}else{Stop-Job $task;Remove-Job $task;exit 1} } catch { exit 1 }"
-if !errorlevel! equ 0 (
-    if exist "%DOCKER_INSTALLER%" (
-        echo [OK] 清华镜像下载完成
+echo [1/4] 尝试清华镜像下载...
+powershell -Command "$ProgressPreference='SilentlyContinue'; try { $task=Start-Job -ScriptBlock { param($u,$o) Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing } -ArgumentList 'https://mirrors.tuna.tsinghua.edu.cn/docker-ce/win/static/stable/x86_64/Docker%%20Desktop%%20Installer.exe','%DOCKER_INSTALLER%'; if(Wait-Job $task -Timeout 300){Receive-Job $task;Remove-Job $task;exit 0}else{Stop-Job $task;Remove-Job $task;exit 1} } catch { exit 1 }"
+if !errorlevel! equ 0 if exist "%DOCKER_INSTALLER%" (
+    for %%A in ("%DOCKER_INSTALLER%") do set "FILE_SIZE=%%~zA"
+    if !FILE_SIZE! gtr 1000000 (
+        echo [OK] 清华镜像下载完成 ^(!FILE_SIZE! 字节^)
         goto :do_install
     )
 )
-echo [!] 清华镜像下载失败或超时, 切换到官方源...
+echo [!] 清华镜像下载失败或超时
+del "%DOCKER_INSTALLER%" >nul 2>&1
 
-REM 备选: 官方源
+REM [2] 华为云镜像
 echo.
-echo [2/2] 尝试官方源下载...
-powershell -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri 'https://desktop.docker.com/win/main/amd64/Docker%%20Desktop%%20Installer.exe' -OutFile '%DOCKER_INSTALLER%' -UseBasicParsing; exit 0 } catch { exit 1 }"
-if !errorlevel! neq 0 (
-    echo.
-    echo [ERROR] Docker 下载失败!
-    echo.
-    echo 请手动下载安装 Docker Desktop:
-    echo   https://www.docker.com/products/docker-desktop/
-    echo.
-    echo 安装完成后重新运行此脚本。
-    pause
-    exit /b 1
+echo [2/4] 尝试华为云镜像下载...
+powershell -Command "$ProgressPreference='SilentlyContinue'; try { $task=Start-Job -ScriptBlock { param($u,$o) Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing } -ArgumentList 'https://mirrors.huaweicloud.com/docker-ce/win/static/stable/x86_64/Docker%%20Desktop%%20Installer.exe','%DOCKER_INSTALLER%'; if(Wait-Job $task -Timeout 300){Receive-Job $task;Remove-Job $task;exit 0}else{Stop-Job $task;Remove-Job $task;exit 1} } catch { exit 1 }"
+if !errorlevel! equ 0 if exist "%DOCKER_INSTALLER%" (
+    for %%A in ("%DOCKER_INSTALLER%") do set "FILE_SIZE=%%~zA"
+    if !FILE_SIZE! gtr 1000000 (
+        echo [OK] 华为云镜像下载完成 ^(!FILE_SIZE! 字节^)
+        goto :do_install
+    )
 )
-echo [OK] 官方源下载完成
+echo [!] 华为云镜像下载失败或超时
+del "%DOCKER_INSTALLER%" >nul 2>&1
+
+REM [3] 中科大镜像
+echo.
+echo [3/4] 尝试中科大镜像下载...
+powershell -Command "$ProgressPreference='SilentlyContinue'; try { $task=Start-Job -ScriptBlock { param($u,$o) Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing } -ArgumentList 'https://mirrors.ustc.edu.cn/docker-ce/win/static/stable/x86_64/Docker%%20Desktop%%20Installer.exe','%DOCKER_INSTALLER%'; if(Wait-Job $task -Timeout 300){Receive-Job $task;Remove-Job $task;exit 0}else{Stop-Job $task;Remove-Job $task;exit 1} } catch { exit 1 }"
+if !errorlevel! equ 0 if exist "%DOCKER_INSTALLER%" (
+    for %%A in ("%DOCKER_INSTALLER%") do set "FILE_SIZE=%%~zA"
+    if !FILE_SIZE! gtr 1000000 (
+        echo [OK] 中科大镜像下载完成 ^(!FILE_SIZE! 字节^)
+        goto :do_install
+    )
+)
+echo [!] 中科大镜像下载失败或超时
+del "%DOCKER_INSTALLER%" >nul 2>&1
+
+REM [4] 官方源 (国内源全部失败后最后尝试)
+echo.
+echo [!] 国内镜像源全部失败, 尝试官方源 (可能较慢)...
+echo [4/4] 尝试官方源下载...
+powershell -Command "$ProgressPreference='SilentlyContinue'; try { $task=Start-Job -ScriptBlock { param($u,$o) Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing } -ArgumentList 'https://desktop.docker.com/win/main/amd64/Docker%%20Desktop%%20Installer.exe','%DOCKER_INSTALLER%'; if(Wait-Job $task -Timeout 600){Receive-Job $task;Remove-Job $task;exit 0}else{Stop-Job $task;Remove-Job $task;exit 1} } catch { exit 1 }"
+if !errorlevel! equ 0 if exist "%DOCKER_INSTALLER%" (
+    for %%A in ("%DOCKER_INSTALLER%") do set "FILE_SIZE=%%~zA"
+    if !FILE_SIZE! gtr 1000000 (
+        echo [OK] 官方源下载完成 ^(!FILE_SIZE! 字节^)
+        goto :do_install
+    )
+)
+echo [!] 官方源下载失败或超时
+del "%DOCKER_INSTALLER%" >nul 2>&1
+
+echo.
+echo [ERROR] 所有镜像源下载失败!
+echo.
+echo 请手动下载安装 Docker Desktop:
+echo   清华:  https://mirrors.tuna.tsinghua.edu.cn/docker-ce/win/static/stable/x86_64/
+echo   官方:  https://www.docker.com/products/docker-desktop/
+echo.
+echo 安装完成后重新运行此脚本。
+pause
+exit /b 1
 
 :do_install
 echo.
@@ -157,17 +199,9 @@ if not exist ".env" (
         copy .env.example .env >nul
         echo [OK] 已创建 .env 文件
         echo.
-        echo ============================================================
-        echo   重要: 请编辑 .env 文件, 填入你的 API Key!
-        echo   至少配置一个:
-        echo     OPENAI_API_KEY=sk-你的DeepSeek密钥
-        echo     或 DEEPSEEK_API_KEY=sk-你的DeepSeek密钥
-        echo ============================================================
+        echo   提示: 可以启动后在网页界面右上角 设置 → 添加模型 里填 API Key
+        echo   .env 文件是可选的, 前端填的密钥优先级更高
         echo.
-        set /p EDIT_ENV=是否现在编辑 .env? (Y/N):
-        if /i "!EDIT_ENV!"=="Y" (
-            notepad .env
-        )
     ) else (
         echo [ERROR] .env 和 .env.example 均不存在
         pause
@@ -197,8 +231,7 @@ if !errorlevel! neq 0 (
     echo [ERROR] 启动失败!
     echo 请检查:
     echo   1. Docker Desktop 是否已启动
-    echo   2. .env 文件中的 API Key 是否正确
-    echo   3. 端口 8000 是否被占用
+    echo   2. 端口 8000 是否被占用
     pause
     exit /b 1
 )
@@ -209,6 +242,7 @@ echo   天衍启动成功!
 echo ============================================================
 echo.
 echo   访问地址: http://localhost:8000
+echo   首次使用: 在网页右上角 设置 → 添加模型 → 填入 API Key
 echo.
 echo   常用命令:
 echo     查看日志:   docker logs -f tianyan

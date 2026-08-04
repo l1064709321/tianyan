@@ -38,11 +38,13 @@ fi
 
 if [ "${goto_install_docker:-false}" = "true" ]; then
     # ============================================================
-    # 2. 安装 Docker (优先阿里云镜像, 10分钟超时切国外源)
+    # 2. 安装 Docker (国内镜像源逐个尝试, 最后才用官方源)
+    #    镜像源优先级: 阿里云 → 清华 → 华为云 → 中科大 → 官方
     # ============================================================
     echo "============================================================"
     echo "  安装 Docker Engine"
-    echo "  优先阿里云镜像, 10 分钟超时后切换官方源"
+    echo "  镜像源优先级: 阿里云 → 清华 → 华为云 → 中科大 → 官方源"
+    echo "  每个源超时 5 分钟, 失败后自动切换下一个"
     echo "============================================================"
 
     OS_TYPE=""
@@ -60,6 +62,7 @@ if [ "${goto_install_docker:-false}" = "true" ]; then
         if ! command -v brew &> /dev/null; then
             warn "Homebrew 未安装, 正在安装..."
             /bin/bash -c "$(curl -fsSL https://mirrors.aliyun.com/homebrew/install/HEAD/install.sh)" || \
+            /bin/bash -c "$(curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install/HEAD/install.sh)" || \
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         fi
         brew install --cask docker || {
@@ -67,49 +70,95 @@ if [ "${goto_install_docker:-false}" = "true" ]; then
             echo "请手动下载安装: https://www.docker.com/products/docker-desktop/"
             exit 1
         }
-        # 启动 Docker Desktop
         open -a Docker 2>/dev/null || true
         warn "请等待 Docker Desktop 启动完毕..."
+
     elif [ "$OS_TYPE" = "ubuntu" ] || [ "$OS_TYPE" = "debian" ]; then
-        # Ubuntu/Debian: 优先阿里云镜像安装
+        # Ubuntu/Debian: 多国内镜像源逐个尝试
         echo ""
-        step "Ubuntu/Debian: 通过阿里云镜像安装 Docker..."
+        step "Ubuntu/Debian: 安装 Docker..."
+        CODENAME=$(. /etc/os-release && echo $VERSION_CODENAME)
+        ARCH=$(dpkg --print-architecture)
+        DOCKER_INSTALLED=false
 
-        # 尝试阿里云镜像 (10分钟超时)
-        INSTALL_SCRIPT_ALIYUN="https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg"
-        if curl -fsSL --max-time 600 https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg 2>/dev/null; then
-            info "阿里云镜像可用, 使用国内源安装..."
+        # 国内镜像源列表 (GPG key URL, apt repo URL)
+        MIRRORS=(
+            "阿里云|https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg|https://mirrors.aliyun.com/docker-ce/linux/ubuntu"
+            "清华|https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/ubuntu/gpg|https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/ubuntu"
+            "华为云|https://mirrors.huaweicloud.com/docker-ce/linux/ubuntu/gpg|https://mirrors.huaweicloud.com/docker-ce/linux/ubuntu"
+            "中科大|https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu/gpg|https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu"
+        )
 
-            # 添加 Docker 仓库 (阿里云镜像)
-            CODENAME=$(. /etc/os-release && echo $VERSION_CODENAME)
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.aliyun.com/docker-ce/linux/ubuntu $CODENAME stable" | \
-                sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        for MIRROR_ENTRY in "${MIRRORS[@]}"; do
+            MIRROR_NAME="${MIRROR_ENTRY%%|*}"
+            REST="${MIRROR_ENTRY#*|}"
+            GPG_URL="${REST%%|*}"
+            REPO_BASE="${REST##*|}"
 
-            sudo apt-get update
-            sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-        else
-            warn "阿里云镜像不可用或超时, 切换到官方源..."
+            echo ""
+            echo "  尝试 ${MIRROR_NAME} 镜像..."
+            if curl -fsSL --max-time 300 "$GPG_URL" | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg 2>/dev/null; then
+                info "${MIRROR_NAME} 镜像可用, 使用该源安装..."
+                echo "deb [arch=${ARCH} signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] ${REPO_BASE} ${CODENAME} stable" | \
+                    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                sudo apt-get update
+                sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+                if docker --version &> /dev/null; then
+                    info "${MIRROR_NAME} 镜像安装成功"
+                    DOCKER_INSTALLED=true
+                    break
+                fi
+            fi
+            warn "${MIRROR_NAME} 镜像不可用或超时, 切换下一个..."
+        done
+
+        # 国内源全部失败, 最后尝试官方源
+        if [ "$DOCKER_INSTALLED" = "false" ]; then
+            echo ""
+            warn "国内镜像源全部失败, 尝试官方源 (可能较慢)..."
             curl -fsSL https://get.docker.com | sudo sh
         fi
 
-        # 启动 Docker 服务
         sudo systemctl start docker
         sudo systemctl enable docker
-
-        # 将当前用户加入 docker 组 (免 sudo)
         sudo usermod -aG docker $USER 2>/dev/null || true
         warn "已将当前用户加入 docker 组, 可能需要重新登录生效"
 
     elif [ "$OS_TYPE" = "centos" ] || [ "$OS_TYPE" = "rhel" ] || [ "$OS_TYPE" = "fedora" ]; then
-        # CentOS/RHEL/Fedora: 优先阿里云镜像安装
+        # CentOS/RHEL/Fedora: 多国内镜像源逐个尝试
         echo ""
-        step "CentOS/RHEL: 通过阿里云镜像安装 Docker..."
+        step "CentOS/RHEL: 安装 Docker..."
+        DOCKER_INSTALLED=false
 
-        if curl -fsSL --max-time 600 https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo 2>/dev/null; then
-            info "阿里云镜像可用, 使用国内源安装..."
-            sudo yum install -y docker-ce docker-ce-cli containerd.io
-        else
-            warn "阿里云镜像不可用或超时, 切换到官方源..."
+        MIRRORS=(
+            "阿里云|https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo"
+            "清华|https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/centos/docker-ce.repo"
+            "华为云|https://mirrors.huaweicloud.com/docker-ce/linux/centos/docker-ce.repo"
+            "中科大|https://mirrors.ustc.edu.cn/docker-ce/linux/centos/docker-ce.repo"
+        )
+
+        for MIRROR_ENTRY in "${MIRRORS[@]}"; do
+            MIRROR_NAME="${MIRROR_ENTRY%%|*}"
+            REPO_URL="${MIRROR_ENTRY##*|}"
+
+            echo ""
+            echo "  尝试 ${MIRROR_NAME} 镜像..."
+            if curl -fsSL --max-time 300 "$REPO_URL" -o /etc/yum.repos.d/docker-ce.repo 2>/dev/null; then
+                info "${MIRROR_NAME} 镜像可用, 使用该源安装..."
+                sudo yum install -y docker-ce docker-ce-cli containerd.io
+                if docker --version &> /dev/null; then
+                    info "${MIRROR_NAME} 镜像安装成功"
+                    DOCKER_INSTALLED=true
+                    break
+                fi
+            fi
+            warn "${MIRROR_NAME} 镜像不可用或超时, 切换下一个..."
+        done
+
+        # 国内源全部失败, 最后尝试官方源
+        if [ "$DOCKER_INSTALLED" = "false" ]; then
+            echo ""
+            warn "国内镜像源全部失败, 尝试官方源 (可能较慢)..."
             curl -fsSL https://get.docker.com | sudo sh
         fi
 
@@ -119,16 +168,41 @@ if [ "${goto_install_docker:-false}" = "true" ]; then
         warn "已将当前用户加入 docker 组, 可能需要重新登录生效"
 
     else
-        # 通用安装 (get.docker.com)
+        # 通用安装: 多国内镜像源逐个尝试
         echo ""
-        step "未知系统, 使用官方脚本安装..."
-        # 先尝试阿里云镜像
-        if curl -fsSL --max-time 600 https://mirrors.aliyun.com/docker-engine/install.sh | sudo sh 2>/dev/null; then
-            info "阿里云镜像安装成功"
-        else
-            warn "阿里云镜像不可用或超时, 切换到官方源..."
+        step "未知系统, 使用通用脚本安装..."
+        DOCKER_INSTALLED=false
+
+        # 国内镜像源列表
+        MIRRORS=(
+            "阿里云|https://mirrors.aliyun.com/docker-engine/install.sh"
+            "清华|https://mirrors.tuna.tsinghua.edu.cn/docker-engine/install.sh"
+            "华为云|https://mirrors.huaweicloud.com/docker-engine/install.sh"
+        )
+
+        for MIRROR_ENTRY in "${MIRRORS[@]}"; do
+            MIRROR_NAME="${MIRROR_ENTRY%%|*}"
+            SCRIPT_URL="${MIRROR_ENTRY##*|}"
+
+            echo ""
+            echo "  尝试 ${MIRROR_NAME} 镜像..."
+            if curl -fsSL --max-time 300 "$SCRIPT_URL" | sudo sh 2>/dev/null; then
+                if docker --version &> /dev/null; then
+                    info "${MIRROR_NAME} 镜像安装成功"
+                    DOCKER_INSTALLED=true
+                    break
+                fi
+            fi
+            warn "${MIRROR_NAME} 镜像不可用或超时, 切换下一个..."
+        done
+
+        # 国内源全部失败, 最后尝试官方源
+        if [ "$DOCKER_INSTALLED" = "false" ]; then
+            echo ""
+            warn "国内镜像源全部失败, 尝试官方源 (可能较慢)..."
             curl -fsSL https://get.docker.com | sudo sh
         fi
+
         sudo systemctl start docker 2>/dev/null || true
         sudo systemctl enable docker 2>/dev/null || true
     fi
@@ -205,17 +279,35 @@ if [ "$HAS_COMPOSE" = "false" ]; then
         *)       COMPOSE_ARCH="x86_64" ;;
     esac
 
-    # 优先阿里云镜像下载
-    ALIYUN_COMPOSE_URL="https://mirrors.aliyun.com/docker-toolbox/linux/compose/${COMPOSE_VERSION}/docker-compose-$(uname -s)-${COMPOSE_ARCH}"
-    OFFICIAL_COMPOSE_URL="https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-${COMPOSE_ARCH}"
-
     COMPOSE_BIN=/usr/local/bin/docker-compose
+    COMPOSE_FILE="docker-compose-$(uname -s)-${COMPOSE_ARCH}"
 
-    echo "  尝试阿里云镜像下载..."
-    if sudo curl -fsSL --max-time 600 -o "$COMPOSE_BIN" "$ALIYUN_COMPOSE_URL" 2>/dev/null; then
-        info "阿里云镜像下载成功"
-    else
-        warn "阿里云镜像不可用或超时, 切换到官方源..."
+    # 国内镜像源逐个尝试
+    MIRRORS_COMPOSE=(
+        "阿里云|https://mirrors.aliyun.com/docker-toolbox/linux/compose/${COMPOSE_VERSION}/${COMPOSE_FILE}"
+        "清华|https://mirrors.tuna.tsinghua.edu.cn/docker-toolbox/linux/compose/${COMPOSE_VERSION}/${COMPOSE_FILE}"
+        "华为云|https://mirrors.huaweicloud.com/docker-toolbox/linux/compose/${COMPOSE_VERSION}/${COMPOSE_FILE}"
+    )
+    OFFICIAL_COMPOSE_URL="https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/${COMPOSE_FILE}"
+
+    COMPOSE_DOWNLOADED=false
+    for MIRROR_ENTRY in "${MIRRORS_COMPOSE[@]}"; do
+        MIRROR_NAME="${MIRROR_ENTRY%%|*}"
+        DOWNLOAD_URL="${MIRROR_ENTRY##*|}"
+
+        echo "  尝试 ${MIRROR_NAME} 镜像下载..."
+        if sudo curl -fsSL --max-time 300 -o "$COMPOSE_BIN" "$DOWNLOAD_URL" 2>/dev/null; then
+            info "${MIRROR_NAME} 镜像下载成功"
+            COMPOSE_DOWNLOADED=true
+            break
+        fi
+        warn "${MIRROR_NAME} 镜像不可用或超时, 切换下一个..."
+    done
+
+    # 国内源全部失败, 最后尝试官方源
+    if [ "$COMPOSE_DOWNLOADED" = "false" ]; then
+        echo ""
+        warn "国内镜像源全部失败, 尝试官方源 (可能较慢)..."
         if sudo curl -fsSL --max-time 600 -o "$COMPOSE_BIN" "$OFFICIAL_COMPOSE_URL"; then
             info "官方源下载成功"
         else
@@ -245,17 +337,9 @@ if [ ! -f ".env" ]; then
         cp .env.example .env
         info "已创建 .env 文件"
         echo ""
-        echo "============================================================"
-        echo "  重要: 请编辑 .env 文件, 填入你的 API Key!"
-        echo "  至少配置一个:"
-        echo "    OPENAI_API_KEY=sk-你的DeepSeek密钥"
-        echo "    或 DEEPSEEK_API_KEY=sk-你的DeepSeek密钥"
-        echo "============================================================"
+        echo "  提示: 可以启动后在网页界面右上角 设置 → 添加模型 里填 API Key"
+        echo "  .env 文件是可选的, 前端填的密钥优先级更高"
         echo ""
-        read -p "是否现在编辑 .env? (y/N): " EDIT_ENV
-        if [[ "$EDIT_ENV" =~ ^[Yy]$ ]]; then
-            ${EDITOR:-vi} .env
-        fi
     else
         error ".env 和 .env.example 均不存在"
         exit 1
@@ -283,8 +367,7 @@ if [ $? -ne 0 ]; then
     error "启动失败!"
     echo "请检查:"
     echo "  1. Docker 是否已启动"
-    echo "  2. .env 文件中的 API Key 是否正确"
-    echo "  3. 端口 8000 是否被占用"
+    echo "  2. 端口 8000 是否被占用"
     exit 1
 fi
 
@@ -294,6 +377,7 @@ echo "  天衍启动成功!"
 echo "============================================================"
 echo ""
 echo "  访问地址: http://localhost:8000"
+echo "  首次使用: 在网页右上角 设置 → 添加模型 → 填入 API Key"
 echo ""
 echo "  常用命令:"
 echo "    查看日志:   docker logs -f tianyan"

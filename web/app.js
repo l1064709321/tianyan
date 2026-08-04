@@ -1008,11 +1008,12 @@ function getToolQueue(assistant, ag) {
 }
 
 // 给总编气泡惰性注入双层折叠结构 (.sub-think-toggle + .sub-think-panel)
-// 不重复 .sub-role (外层 .role 已显示 "✦ 天衍"), 只加 toggle + panel
+// 思考面板插在气泡外面 (跟子agent结构一致)
 function ensureOrchestratorThinkPanel(assistant) {
   if (assistant.thinkBody) return assistant.thinkBody;
   const bubble = assistant.el;
   if (!bubble) return null;
+  const container = bubble.parentElement; // .msg.assistant
   const toggle = document.createElement("div");
   toggle.className = "sub-think-toggle";
   toggle.innerHTML = `思考过程 <span class="arrow">▼</span>`;
@@ -1020,8 +1021,9 @@ function ensureOrchestratorThinkPanel(assistant) {
   const panel = document.createElement("div");
   panel.className = "sub-think-panel";
   panel.innerHTML = `<div class="sub-think-body"></div>`;
-  bubble.insertBefore(panel, bubble.firstChild);
-  bubble.insertBefore(toggle, panel);
+  // 插在气泡外面、气泡之前
+  container.insertBefore(panel, bubble);
+  container.insertBefore(toggle, panel);
   assistant.thinkPanel = panel;
   assistant.thinkBody = panel.querySelector(".sub-think-body");
   return assistant.thinkBody;

@@ -56,32 +56,53 @@
 
 ---
 
-## 🚀 快速开始(3 步搞定)
+## 🚀 快速开始
 
-### 第 1 步:克隆仓库
+### 方式一: 一键启动 (推荐)
+
+**Windows**:
+```bash
+git clone https://github.com/l1064709321/tianyan.git
+cd tianyan
+start.bat
+```
+
+**Linux / macOS**:
+```bash
+git clone https://github.com/l1064709321/tianyan.git
+cd tianyan
+chmod +x start.sh
+./start.sh
+```
+
+`start.bat` / `start.sh` 会自动:
+- 检测 Python 环境
+- 检测并安装全部依赖 (国内镜像源加速)
+- 启动服务
+
+启动后浏览器打开 **http://localhost:8000**
+
+### 方式二: npm 安装
 
 ```bash
 git clone https://github.com/l1064709321/tianyan.git
 cd tianyan
+npm install
+npm start
 ```
 
-### 第 2 步:启动服务
+### 方式三: pip 安装
 
-**Windows**: 双击 `tianyan.bat`
-
-**Linux / macOS**:
 ```bash
-chmod +x tianyan.sh
-./tianyan.sh
+git clone https://github.com/l1064709321/tianyan.git
+cd tianyan
+pip install -r requirements-win.txt
+python run.py
 ```
 
-脚本会自动检测 Docker → 未安装则自动安装 → 构建镜像 → 启动容器。
+### 配置 API Key
 
-> **代码已经打包进 Docker 镜像里了。** `docker-compose up -d --build` 构建时,所有源码会被 `COPY . .` 复制进镜像,编译为 `.pyc` 后删除 `.py` 源文件(代码保护)。你不需要在容器外保留源码,也不需要挂载代码目录,镜像里自带完整应用。
-
-### 第 3 步:在前端界面填入 API Key
-
-**不需要手动编辑 `.env` 文件!** 前端界面自带密钥配置功能:
+启动后在前端界面配置:
 
 1. 打开浏览器访问 `http://localhost:8000`
 2. 点击页面右上角 **设置** 按钮
@@ -89,7 +110,7 @@ chmod +x tianyan.sh
 4. 填入 API Key 和模型信息
 5. 保存即可,密钥会自动持久化,重启不丢失
 
-前端填入的密钥优先级高于 `.env` 文件,两者配一个就行。
+推荐使用 DeepSeek (国内直连,无需代理): https://platform.deepseek.com
 
 ---
 

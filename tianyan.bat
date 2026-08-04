@@ -27,6 +27,12 @@ if !errorlevel! neq 0 (
 )
 docker --version
 echo [OK] Docker 已安装
+
+REM 配置 Docker 镜像加速 (已安装的情况)
+set "DOCKER_USERCONFIG=%USERPROFILE%\.docker"
+if not exist "%DOCKER_USERCONFIG%" mkdir "%DOCKER_USERCONFIG%"
+powershell -NoProfile -Command "if (-not (Test-Path '%DOCKER_USERCONFIG%\daemon.json')) { $d = @{'registry-mirrors'=@('https://mirror.ccs.tencentyun.com','https://docker.mirrors.ustc.edu.cn','https://docker.m.daocloud.io')}; $json = ConvertTo-Json -InputObject $d -Depth 5 -Compress; Set-Content -Path '%DOCKER_USERCONFIG%\daemon.json' -Value $json -Encoding UTF8; Write-Host '[OK] 已配置 Docker 镜像加速' } else { Write-Host '[OK] daemon.json 已存在' }"
+
 goto :check_compose
 
 REM ---------- 2. 安装 Docker ----------
@@ -123,9 +129,62 @@ del "%DOCKER_INSTALLER%" >nul 2>&1
 
 echo.
 echo [OK] Docker Desktop 安装完成
-echo [!] 请等待 Docker Desktop 启动完毕 (系统托盘出现鲸鱼图标)
 
-REM 启动 Docker Desktop
+REM ============================================================
+REM 强制配置: 跳过 Docker Desktop 登录界面 + 镜像加速
+REM ============================================================
+echo.
+echo [*] 配置 Docker Desktop: 强制跳过登录界面...
+
+REM --- 1. 预创建 settings 文件 (标记 onboarding 已完成, 跳过登录弹窗) ---
+set "DOCKER_APPDATA=%APPDATA%\Docker"
+if not exist "%DOCKER_APPDATA%" mkdir "%DOCKER_APPDATA%"
+
+powershell -NoProfile -Command "if (-not (Test-Path '%DOCKER_APPDATA%\settings-store.json')) { $s = @{displayedOnboarding=$true;analyticsEnabled=$false;openUIOnStartupDisabled=$true;useResourceSaver=$true;useWSL2=$true;theme='system';showTip=$false}; $json = ConvertTo-Json -InputObject $s -Compress; Set-Content -Path '%DOCKER_APPDATA%\settings-store.json' -Value $json -Encoding UTF8; Write-Host '[OK] settings-store.json' }"
+
+powershell -NoProfile -Command "if (-not (Test-Path '%DOCKER_APPDATA%\settings.json')) { $s = @{displayedOnboarding=$true;analyticsEnabled=$false;openUIOnStartupDisabled=$true;useResourceSaver=$true;useWSL2=$true;theme='system';showTip=$false}; $json = ConvertTo-Json -InputObject $s -Compress; Set-Content -Path '%DOCKER_APPDATA%\settings.json' -Value $json -Encoding UTF8; Write-Host '[OK] settings.json' }"
+
+echo [OK] 已预配置 settings (跳过 onboarding/登录)
+
+REM --- 2. 预配置 Docker daemon 镜像加速 ---
+set "DOCKER_USERCONFIG=%USERPROFILE%\.docker"
+if not exist "%DOCKER_USERCONFIG%" mkdir "%DOCKER_USERCONFIG%"
+
+powershell -NoProfile -Command "if (-not (Test-Path '%DOCKER_USERCONFIG%\daemon.json')) { $d = @{'registry-mirrors'=@('https://mirror.ccs.tencentyun.com','https://docker.mirrors.ustc.edu.cn','https://docker.m.daocloud.io')}; $json = ConvertTo-Json -InputObject $d -Depth 5 -Compress; Set-Content -Path '%DOCKER_USERCONFIG%\daemon.json' -Value $json -Encoding UTF8; Write-Host '[OK] daemon.json' }"
+
+echo [OK] 已配置 Docker 镜像加速
+
+REM --- 3. 创建并启动后台 PowerShell 脚本: 自动关闭登录弹窗 ---
+echo [*] 启动后台任务: 自动跳过 Docker Desktop 登录弹窗...
+set "SKIP_PS1=%TEMP%\skip_docker_login.ps1"
+echo $ErrorActionPreference = 'SilentlyContinue' > "%SKIP_PS1%"
+echo Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes >> "%SKIP_PS1%"
+echo $elapsed = 0 >> "%SKIP_PS1%"
+echo $found = $false >> "%SKIP_PS1%"
+echo while (($elapsed -lt 180) -and (-not $found)) { >> "%SKIP_PS1%"
+echo   $root = [System.Windows.Automation.AutomationElement]::RootElement >> "%SKIP_PS1%"
+echo   $btnNames = @('Skip', 'Continue without signing in', 'Continue', 'Skip tutorial', 'Got it') >> "%SKIP_PS1%"
+echo   foreach ($btnName in $btnNames) { >> "%SKIP_PS1%"
+echo     $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $btnName) >> "%SKIP_PS1%"
+echo     $btn = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond) >> "%SKIP_PS1%"
+echo     if ($btn) { >> "%SKIP_PS1%"
+echo       try { >> "%SKIP_PS1%"
+echo         $inv = $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern) >> "%SKIP_PS1%"
+echo         $inv.Invoke() >> "%SKIP_PS1%"
+echo         $found = $true >> "%SKIP_PS1%"
+echo       } catch {} >> "%SKIP_PS1%"
+echo       break >> "%SKIP_PS1%"
+echo     } >> "%SKIP_PS1%"
+echo   } >> "%SKIP_PS1%"
+echo   Start-Sleep -Seconds 2 >> "%SKIP_PS1%"
+echo   $elapsed += 2 >> "%SKIP_PS1%"
+echo } >> "%SKIP_PS1%"
+start /b powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%SKIP_PS1%"
+echo [OK] 后台任务已启动 (自动点击 Skip/Continue, 最多运行 3 分钟)
+
+REM --- 4. 启动 Docker Desktop ---
+echo.
+echo [!] 请等待 Docker Desktop 启动完毕 (系统托盘出现鲸鱼图标)
 echo.
 echo [4/5] 启动 Docker Desktop...
 set "DOCKER_DESKTOP=C:\Program Files\Docker\Docker\Docker Desktop.exe"

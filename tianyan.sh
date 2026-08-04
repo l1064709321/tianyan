@@ -237,6 +237,28 @@ if [ "${goto_install_docker:-false}" = "true" ]; then
 fi
 
 # ============================================================
+# 2.5. 配置 Docker 镜像加速 (无论新装还是已有都检查)
+# ============================================================
+echo ""
+echo "============================================================"
+echo "  配置 Docker 镜像加速"
+echo "============================================================"
+
+DAEMON_JSON="/etc/docker/daemon.json"
+if [ "$(uname)" = "Darwin" ]; then
+    # macOS: Docker Desktop 通过 settings 配置, 不需要 daemon.json
+    info "macOS: Docker Desktop 自带镜像配置, 跳过"
+elif [ ! -f "$DAEMON_JSON" ]; then
+    sudo mkdir -p /etc/docker
+    echo '{"registry-mirrors":["https://mirror.ccs.tencentyun.com","https://docker.mirrors.ustc.edu.cn","https://docker.m.daocloud.io"]}' | sudo tee "$DAEMON_JSON" > /dev/null
+    sudo systemctl daemon-reload 2>/dev/null || true
+    sudo systemctl restart docker 2>/dev/null || true
+    info "已配置 Docker 镜像加速 (腾讯云/中科大/DaoCloud)"
+else
+    info "daemon.json 已存在, 跳过配置"
+fi
+
+# ============================================================
 # 3. 检测 docker-compose
 # ============================================================
 echo ""

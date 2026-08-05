@@ -1199,6 +1199,21 @@ TOOL_SCHEMA: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "skill_scout",
+            "description": "技能内核-扫榜调研:基于内核 DB 扫描题材热度,输出市场报告。"
+            "分析热门题材趋势、读者画像、流量赛道。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "genre": {"type": "string", "description": "题材方向,如'玄幻'/'都市'/'悬疑'(可选,不填则通用分析)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "audit_novel",
             "description": "技能内核-33维审计:对正文做 33 个维度的专业审计(人设/情节/伏笔/节奏/逻辑/文风等),"
             "输出结构化报告。比 review_chapter 的毒舌审稿更系统全面,适合定稿前深度质检。",

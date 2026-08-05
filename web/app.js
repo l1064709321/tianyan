@@ -1226,6 +1226,29 @@ function handleEvent(evt, assistant) {
       scrollChat();
       break;
     }
+    case "sandbox_validate": {
+      // 沙箱验证事件: 显示前置条件检查结果
+      const ag = evt.agent || "";
+      const agLbl = AGENT_LABELS[ag] || ag;
+      const agIcon = AGENT_ICONS[ag] || "👤";
+      const toolName = cnTool(evt.tool || "");
+      const passed = evt.passed;
+      const issues = evt.issues || [];
+      
+      // 左侧面板: 显示验证结果
+      if (passed) {
+        appendThink(`<div class="td-entry td-done">
+          <span class="td-dot"></span>
+          <span class="td-text"><span class="td-tag done">验证</span> <b>${esc(agLbl)}</b> · ${esc(toolName)} 前置条件满足</span>
+        </div>`);
+      } else {
+        appendThink(`<div class="td-entry td-error">
+          <span class="td-dot"></span>
+          <span class="td-text"><span class="td-tag error">验证</span> <b>${esc(agLbl)}</b> · ${esc(toolName)} 前置条件不满足: ${issues.map(i => esc(i)).join('; ')}</span>
+        </div>`);
+      }
+      break;
+    }
     case "review": {
       // 群聊式: 总编验收 (符合设想→产出 / 有问题→打回)
       const pass = evt.pass;

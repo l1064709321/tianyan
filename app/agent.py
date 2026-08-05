@@ -238,6 +238,59 @@ def _check_sandbox(agent_name: str, tool_name: str) -> str | None:
     return None
 
 
+# ===== 沙箱验证: 写作前/审核前的前置检查 =====
+# 写作前: 验证大纲、角色档案、上下文是否就绪
+# 审核前: 验证正文是否存在
+# 返回 (passed: bool, issues: list[str])
+def _sandbox_validate(pid: str, agent_name: str, tool_name: str, args: dict) -> tuple[bool, list[str]]:
+    """沙箱验证: 在执行写作/审核工具前,检查前置条件是否满足。
+
+    返回 (是否通过, 问题列表)。不通过时应跳过执行并报告问题。
+    """
+    issues = []
+
+    # 写作类工具: 验证大纲、角色档案、上下文
+    if tool_name in ("continue_writing", "polish", "ghostwrite"):
+        chapters = store.list_chapters(pid)
+        if not chapters:
+            issues.append("无章节数据,需先生成大纲")
+        # 检查是否有角色档案
+        elements = store.list_elements(pid)
+        characters = [e for e in elements if e.get("kind") == "character"]
+        if not characters:
+            issues.append("无角色档案,建议先委派 character-designer 建立角色")
+        # 检查是否有上下文 (素材库)
+        chunks = store.list_chunks(pid)
+        if not chunks and not any(c.get("content") for c in chapters):
+            issues.append("无上下文素材,建议先上传参考资料或委派 story-explorer 加载上下文")
+
+    # 审核类工具: 验证正文是否存在
+    if tool_name in ("audit_novel", "detect_ai", "full_audit", "diagnose_opening",
+                     "four_check", "quality_check", "review_chapter"):
+        chapter_id = args.get("chapter_id", "")
+        if chapter_id:
+            ch = store.get_chapter(chapter_id)
+            if not ch:
+                issues.append(f"章节 {chapter_id} 不存在")
+            elif not ch.get("content"):
+                issues.append(f"章节 {chapter_id} 无正文,无法审核")
+
+    # 风格分析: 验证正文是否存在
+    if tool_name in ("analyze_style", "cache_style"):
+        text = args.get("text", "")
+        if not text:
+            chapter_id = args.get("chapter_id", "")
+            if chapter_id:
+                ch = store.get_chapter(chapter_id)
+                if not ch or not ch.get("content"):
+                    issues.append(f"章节 {chapter_id} 无正文,无法分析风格")
+
+    passed = len(issues) == 0
+    if not passed:
+        logger.info(f"[{agent_name}] 沙箱验证未通过: {issues}")
+    return passed, issues
+
+
 # ===== 上下文窗口管理 (改进:摘要压缩替代粗暴截断) =====
 # 原版: 超长直接丢弃旧消息 → 丢失重要上下文(角色设定/伏笔/剧情决策)
 # 改进: 超长时把旧消息压缩成摘要,保留关键信息,再拼接最近消息
@@ -561,6 +614,23 @@ async def _exec_tool(
             store.add_run_event(run_id, "tool_call", agent=agent_name, tool=fname,
                                 input_=fargs, error=sandbox_err, duration_ms=0)
         return json.dumps({"error": sandbox_err}, ensure_ascii=False)
+
+    # 沙箱验证: 写作/审核前检查前置条件
+    validate_pass, validate_issues = _sandbox_validate(pid, agent_name, fname, fargs)
+    if not validate_pass:
+        warning = f"⚠️ 沙箱验证警告: {'; '.join(validate_issues)}。建议先补充缺失信息再执行。"
+        logger.warning(f"[{agent_name}] {warning}")
+        # 发送验证事件到前端
+        if emit:
+            await emit({"type": "sandbox_validate", "agent": agent_name,
+                        "tool": fname, "passed": False, "issues": validate_issues})
+        # 不阻断执行,只注入警告让 LLM 决定是否继续
+        # 将警告作为返回值的一部分,让 LLM 知道前置条件不满足
+    else:
+        # 验证通过,发送成功事件
+        if emit:
+            await emit({"type": "sandbox_validate", "agent": agent_name,
+                        "tool": fname, "passed": True, "issues": []})
     if fname == "delegate_to_agent":
         # 参数名容错: 模型常把 agent/task 幻觉成 agent_role/agent_name/target/prompt/instruction
         target = (fargs.get("agent") or fargs.get("agent_name") or

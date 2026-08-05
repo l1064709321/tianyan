@@ -1161,3 +1161,16 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .conn-dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex-shrink:0;transition:.2s}
 .conn-text{font-size:10.5px;white-space:nowrap}
 @media(max-width:680px){.conn-text{display:none}}
+
+/* 总编气泡的思考过程 inline toggle (在角色名右边) */
+.sub-think-toggle-inline{display:inline-flex;align-items:center;gap:4px;
+  cursor:pointer;font-size:clamp(10px,1.1vw,11px);font-family:var(--sans);
+  color:var(--muted);transition:.15s;white-space:nowrap;padding:2px 8px;
+  border-radius:10px;background:var(--paper3);border:1px solid var(--border);
+  margin-left:8px;vertical-align:middle}
+.sub-think-toggle-inline:hover{background:var(--paper4);color:var(--ink2);border-color:var(--border2)}
+.sub-think-toggle-inline .arrow{font-size:9px;transition:transform .2s}
+.sub-think-toggle-inline.expanded .arrow{transform:rotate(180deg)}
+/* 思考流式文本的打字光标 */
+.think-stream-text::after{content:"▋";color:var(--blue);animation:cursorBlink 1s steps(2) infinite;margin-left:1px}
+@keyframes cursorBlink{50%{opacity:0}}

@@ -775,7 +775,7 @@ function rotateOrchestratorBubble(assistant) {
   if (!assistant.closed) return;
   const div = document.createElement("div");
   div.className = "msg assistant";
-  div.innerHTML = `<div class="role assistant">✦ 天衍</div><div class="bubble"></div>`;
+  div.innerHTML = `<div class="role assistant">✦ 天衍 <span class="sub-think-toggle-inline" onclick="toggleOrchThink(this)">思考过程 <span class="arrow">▼</span></span></div><div class="bubble"></div>`;
   $("#chat").appendChild(div);
   // 重置 DOM 引用, 保留 steps(左面板索引) 和 subBubbles(专家气泡引用)
   assistant.el = div.querySelector(".bubble");
@@ -933,7 +933,18 @@ function toggleSubThink(btn) {
   const panel = btn.closest(".msg")?.querySelector(".sub-think-panel");
   if (panel) panel.classList.toggle("open");
 }
+// 总编气泡的思考过程切换 (inline toggle)
+function toggleOrchThink(btn) {
+  btn.classList.toggle("expanded");
+  // 找到气泡前面的 think-panel
+  const msg = btn.closest(".msg");
+  if (msg) {
+    const panel = msg.querySelector(".sub-think-panel");
+    if (panel) panel.classList.toggle("open");
+  }
+}
 window.toggleSubThink = toggleSubThink;
+window.toggleOrchThink = toggleOrchThink;
 
 // 规则4: 后端思考文本(字符串)按序号(1. 2.)或换行拆成数组
 function splitThinkItems(text) {
@@ -1014,16 +1025,11 @@ function ensureOrchestratorThinkPanel(assistant) {
   const bubble = assistant.el;
   if (!bubble) return null;
   const container = bubble.parentElement; // .msg.assistant
-  const toggle = document.createElement("div");
-  toggle.className = "sub-think-toggle";
-  toggle.innerHTML = `思考过程 <span class="arrow">▼</span>`;
-  toggle.onclick = () => toggleSubThink(toggle);
   const panel = document.createElement("div");
   panel.className = "sub-think-panel";
   panel.innerHTML = `<div class="sub-think-body"></div>`;
-  // 插在气泡外面、气泡之前
+  // 插在气泡外面、气泡之前 (不创建单独的toggle, toggle在role div里)
   container.insertBefore(panel, bubble);
-  container.insertBefore(toggle, panel);
   assistant.thinkPanel = panel;
   assistant.thinkBody = panel.querySelector(".sub-think-body");
   return assistant.thinkBody;
@@ -1074,38 +1080,71 @@ function handleEvent(evt, assistant) {
       break;
     }
     case "think_start": {
-      // 规则2: 总编思考挂进总编自己气泡的 .sub-think-panel (不再进全局日志)
+      // 思考开始: 自动展开思考面板, 创建流式条目
       if (assistant.closed) rotateOrchestratorBubble(assistant);
       ensureOrchestratorThinkPanel(assistant);
       assistant.thinkBuf = "";
+      // 自动展开思考面板
+      const msg = assistant.el?.closest(".msg");
+      if (msg) {
+        const panel = msg.querySelector(".sub-think-panel");
+        const toggle = msg.querySelector(".sub-think-toggle-inline");
+        if (panel) panel.classList.add("open");
+        if (toggle) toggle.classList.add("expanded");
+      }
+      // 创建流式思考条目
+      const body = assistant.thinkBody;
+      if (body) {
+        const entry = document.createElement("div");
+        entry.className = "st-entry st-think";
+        entry.id = "think-stream-" + (evt.round || 1);
+        entry.innerHTML = `<span class="st-dot"></span><span class="st-text"><b>轮${evt.round || 1}</b> <span class="think-stream-text"></span><span class="thinking-dots"></span></span>`;
+        body.appendChild(entry);
+        assistant.curThinkEntry = entry;
+        assistant.curThinkText = entry.querySelector(".think-stream-text");
+        scrollChat();
+      }
       break;
     }
     case "think_token": {
-      // 逐字累积到缓冲, think_end 时统一拆条渲染 (思考默认折叠, 流式期无需实时刷)
+      // 实时追加思考文本到流式条目 (打字机效果)
+      if (evt.text && assistant.curThinkText) {
+        assistant.curThinkText.appendChild(document.createTextNode(evt.text));
+        scrollChat();
+      }
       if (evt.text) assistant.thinkBuf = (assistant.thinkBuf || "") + evt.text;
       break;
     }
     case "think_end": {
-      // 规则4: 把累积的思考文本按序号/换行拆成条目, 渲进总编气泡的思考面板
+      // 思考结束: 移除打字光标, 显示判断结果
       const body = assistant.thinkBody;
-      if (body && assistant.thinkBuf) {
-        addThinkItem(body, assistant.thinkBuf);
-      }
-      // 可行性结论作为一条摘要
       const feasible = evt.feasible;
       const reason = evt.reason || "";
       const plan = evt.plan || [];
       const missing = evt.missing || "";
+
+      // 移除打字光标
+      if (assistant.curThinkEntry) {
+        const dots = assistant.curThinkEntry.querySelector(".thinking-dots");
+        if (dots) dots.remove();
+        // 更新样式
+        assistant.curThinkEntry.className = `st-entry ${feasible ? "st-done" : "st-think"}`;
+      }
+
+      // 追加判断结论
       if (body && (reason || plan.length || missing)) {
         const planStr = plan.length ? ` → ${plan.join(" → ")}` : "";
         const missStr = missing ? ` ⚠缺: ${missing}` : "";
         const sum = document.createElement("div");
-        sum.className = "st-entry st-think";
+        sum.className = `st-entry ${feasible ? "st-done" : "st-think"}`;
         sum.innerHTML = `<span class="st-dot"></span><span class="st-text"><b>${feasible ? "✓ 可行" : "✗ 不可行"}</b> ${esc(reason)}${esc(planStr)}${esc(missStr)}</span>`;
         body.appendChild(sum);
         scrollChat();
       }
+
       assistant.thinkBuf = "";
+      assistant.curThinkEntry = null;
+      assistant.curThinkText = null;
       break;
     }
     case "delegate": {

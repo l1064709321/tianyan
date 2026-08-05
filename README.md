@@ -1,10 +1,11 @@
 # 天衍
 
-一个多Agent协同的**天衍**(Web 界面)。7 个 agent 协同,按 8 阶段工作流完成从扫榜调研到定稿入库的完整长篇创作闭环,内置「毒舌总编」审稿机制与质检打回循环。
+一个多Agent协同的**天衍**(Web 界面)。7 个 agent 协同,按 5 阶段工作流完成从扫榜调研到定稿入库的完整长篇创作闭环,内置「毒舌总编」审稿机制与质检打回循环。
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green)
-![Docker](https://img.shields.io/badge/Docker-支持-2496ED)
+![Node](https://img.shields.io/badge/Node.js-16+-green)
+![npm](https://img.shields.io/badge/npm-install-blue)
 [![自定义协议](https://img.shields.io/badge/📄-自定义协议-0052d9)](USER_AGREEMENT.md)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-blueviolet)](https://www.gnu.org/licenses/agpl-3.0.html)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0-red)](https://www.gnu.org/licenses/gpl-3.0.html)
@@ -116,95 +117,46 @@ python run.py
 
 ## 📋 目录
 
-1. [Docker 安装指导](#1-docker-安装指导)
+1. [快速开始](#-快速开始)
 2. [环境变量配置说明](#2-环境变量配置说明)
 3. [一键启动说明](#3-一键启动说明)
 4. [项目创建与切换](#4-项目创建与切换)
 5. [多项目记忆隔离说明](#5-多项目记忆隔离说明)
 6. [沙箱安全说明](#6-沙箱安全说明)
 7. [常用命令](#7-常用命令)
-8. [Docker 镜像内部结构](#8-docker-镜像内部结构)
 
 ---
 
-## 1. Docker 安装指导
+## 1. 快速开始
 
-### 方式 A:一键脚本自动安装(推荐)
+详见上方 [快速开始](#-快速开始) 部分。
 
-天衍提供 `tianyan.bat`(Windows)和 `tianyan.sh`(Linux/macOS)一键脚本,自动检测并安装 Docker:
+### 一键启动逻辑
 
-- **Windows**:优先清华镜像下载,10分钟超时后切换国外源
-- **Linux**:优先阿里云镜像安装,10分钟超时后切换官方源
-- **macOS**:通过 Homebrew 安装 Docker Desktop
+`start.bat`(Windows) / `start.sh`(Linux/macOS) 自动完成以下步骤:
 
-### 方式 B:手动安装 Docker
+1. **检测 Python 环境** — 查找 python3 或 python,验证版本 ≥ 3.10
+2. **检测依赖** — 检查 fastapi 是否已安装
+3. **自动安装依赖** — 若未安装,使用国内镜像源(pip.conf 配置)安装全部依赖
+4. **设置环境变量** — `LITELLM_LOCAL_MODEL_COST_MAP=True` 避免 litellm 启动超时
+5. **启动服务** — 运行 `python run.py`,监听 `http://localhost:8000`
 
-#### Windows
+### npm 安装逻辑
 
-1. 下载 Docker Desktop:
-   - 官方:https://www.docker.com/products/docker-desktop/
-   - 清华镜像:https://mirrors.tuna.tsinghua.edu.cn/docker-ce/win/static/stable/x86_64/
-2. 双击安装,重启电脑
-3. 启动 Docker Desktop,等待鲸鱼图标变为稳定状态
+`npm install` 自动执行 `scripts/install.js`:
 
-#### Linux (Ubuntu/Debian)
+1. 检测 Python 3.10+
+2. 配置 pip 镜像源(清华/阿里/华为,依次尝试)
+3. 安装核心依赖(fastapi/uvicorn/litellm 等)
+4. 安装扩展依赖(chromadb/redis/psycopg2/RestrictedPython)
+5. 安装 Playwright 浏览器内核(可选)
 
-```bash
-# 阿里云镜像安装 (国内推荐)
-curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.aliyun.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+`npm start` 自动执行 `scripts/start.js`:
 
-# 官方源安装 (国外)
-curl -fsSL https://get.docker.com | sudo sh
-
-# 启动并设置开机自启
-sudo systemctl start docker
-sudo systemctl enable docker
-sudo usermod -aG docker $USER  # 免 sudo
-```
-
-#### Linux (CentOS/RHEL)
-
-```bash
-# 阿里云镜像
-sudo yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
-sudo yum install -y docker-ce docker-ce-cli containerd.io
-
-# 启动
-sudo systemctl start docker
-sudo systemctl enable docker
-```
-
-#### macOS
-
-```bash
-# Homebrew 安装
-brew install --cask docker
-# 启动 Docker Desktop
-open -a Docker
-```
-
-### 配置 Docker 国内镜像加速
-
-安装完成后,配置国内镜像加速拉取 Docker Hub 镜像:
-
-```json
-// /etc/docker/daemon.json (Linux) 或 Docker Desktop → Settings → Docker Engine
-{
-  "registry-mirrors": [
-    "https://mirror.ccs.tencentyun.com",
-    "https://docker.mirrors.ustc.edu.cn"
-  ]
-}
-```
-
-配置后重启 Docker:
-```bash
-sudo systemctl restart docker  # Linux
-# macOS/Windows: 重启 Docker Desktop
-```
+1. 检查依赖是否已安装
+2. 设置 `LITELLM_LOCAL_MODEL_COST_MAP=True`
+3. 启动 Python 服务
+4. 自动打开浏览器
 
 ---
 
@@ -254,8 +206,8 @@ cp .env.example .env
 | `SANDBOX_TIMEOUT` | 沙箱执行超时(秒) | `30` | 否 |
 | **记忆系统** | | | |
 | `MEMORY_ENABLED` | 是否启用多项目记忆 | `true` | 否 |
-| `REDIS_URL` | Redis 连接地址 | `redis://localhost:6379/0` | 否(Docker 自动配置) |
-| `DATABASE_URL` | PostgreSQL 连接地址 | - | 否(Docker 自动配置) |
+| `REDIS_URL` | Redis 连接地址 | `redis://localhost:6379/0` | 否 |
+| `DATABASE_URL` | PostgreSQL 连接地址 | - | 否 |
 | `CHROMA_PATH` | Chroma 向量库存储路径 | `./data/chroma` | 否 |
 | `DATA_DIR` | 数据目录 | `./data` | 否 |
 | **通用** | | | |
@@ -270,9 +222,6 @@ cp .env.example .env
 ```bash
 # 本地开发: 填本地代理地址
 PROXY=http://127.0.0.1:7890
-
-# Docker 容器内: 用 host.docker.internal 访问宿主机
-PROXY=http://host.docker.internal:7890
 ```
 
 推荐使用 **DeepSeek** (国内直连,无需代理):https://platform.deepseek.com
@@ -284,50 +233,51 @@ PROXY=http://host.docker.internal:7890
 ### Windows
 
 ```cmd
-# 双击 tianyan.bat 或在命令行运行
-tianyan.bat
+:: 双击 start.bat 或在命令行运行
+start.bat
 ```
 
 脚本执行流程:
-1. 检测 Docker → 未安装则自动下载(清华镜像优先,10分钟超时切国外源)
-2. 安装 Docker Desktop → 启动 → 等待引擎就绪
-3. 检测 `.env` → 不存在则从 `.env.example` 复制(可后续在前端界面填密钥)
-4. 执行 `docker-compose up -d --build`
-5. 自动打开浏览器访问 `http://localhost:8000`
+1. 检测 Python 环境 — 查找 python3 或 python,验证版本 ≥ 3.10
+2. 检测依赖 — 检查 fastapi 是否已安装
+3. 自动安装依赖 — 若未安装,使用国内镜像源安装全部依赖
+4. 设置环境变量 — `LITELLM_LOCAL_MODEL_COST_MAP=True` 避免 litellm 启动超时
+5. 启动服务 — 运行 `python run.py`,监听 `http://localhost:8000`
 
 ### Linux / macOS
 
 ```bash
 # 赋予执行权限 (首次)
-chmod +x tianyan.sh
+chmod +x start.sh
 
 # 运行
-./tianyan.sh
+./start.sh
 ```
 
 脚本执行流程:
-1. 检测 Docker → 未安装则自动安装(阿里云镜像优先,10分钟超时切官方源)
-2. 检测 docker-compose → 未安装则自动下载
-3. 检测 `.env` → 不存在则从 `.env.example` 复制(可后续在前端界面填密钥)
-4. 执行 `docker-compose up -d --build`
-5. 自动打开浏览器访问 `http://localhost:8000`
+1. 检测 Python 环境
+2. 检测依赖,自动安装
+3. 设置环境变量
+4. 启动服务
 
-### 手动启动(已安装 Docker)
+### npm 启动
 
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/l1064709321/tianyan.git
 cd tianyan
 
-# 2. 启动 (首次约 2-3 分钟构建镜像)
-#    .env 不是必须的, 可以启动后在网页界面填密钥
-docker-compose up -d --build
+# 2. 安装依赖 (自动安装 Python 依赖)
+npm install
 
-# 3. 访问 http://localhost:8000
-# 4. 在网页右上角 设置 → 添加模型 → 填入 API Key
+# 3. 启动
+npm start
+
+# 4. 访问 http://localhost:8000
+# 5. 在网页界面填入 API Key
 ```
 
-### 本地开发(不使用 Docker)
+### pip 启动
 
 ```bash
 # 1. 克隆仓库
@@ -335,12 +285,10 @@ git clone https://github.com/l1064709321/tianyan.git
 cd tianyan
 
 # 2. 装依赖
-pip install -r requirements.txt
+pip install -r requirements-win.txt
 
 # 3. 启动
 python run.py
-# 或
-python boot.py
 
 # 4. 访问 http://localhost:8000
 # 5. 在网页界面填入 API Key
@@ -475,7 +423,7 @@ POST   /api/projects/{project_id}/chat       # 发送消息(自动关联记忆)
 
 | 级别 | 工具组合 | 隔离强度 | 说明 |
 |------|---------|---------|------|
-| 最强 | firejail + pypy3 | 断网+降权+独立解释器 | Docker 容器内默认 |
+| 最强 | firejail + pypy3 | 断网+降权+独立解释器 | 默认 |
 | 强 | firejail + python | 断网+降权 | pypy3 不可用时 |
 | 中 | pypy3 only | 独立解释器 | firejail 不可用时 |
 | 弱 | python + 超时 | 仅超时控制 | 两者都不可用时(记录警告) |
@@ -500,71 +448,21 @@ SANDBOX_TIMEOUT=30      # 超时秒数 (默认 30 秒)
 
 ## 7. 常用命令
 
-### Docker 容器管理
+### 启动与停止
 
 ```bash
-# 查看运行状态
-docker-compose ps
+# 启动服务
+python run.py
 
-# 查看实时日志
-docker logs -f tianyan
+# 或使用一键启动
+start.bat          # Windows
+./start.sh         # Linux/macOS
 
-# 查看最近 100 行日志
-docker logs --tail 100 tianyan
-
-# 停止所有服务
-docker-compose down
-
-# 重启主服务
-docker-compose restart tianyan
-
-# 重启所有服务
-docker-compose restart
-
-# 重新构建并启动 (代码更新后)
-docker-compose up -d --build
-
-# 查看容器资源占用
-docker stats tianyan
+# 或使用 npm
+npm start
 ```
 
-### 容器内验证
-
-```bash
-# 进入容器
-docker exec -it tianyan bash
-
-# 验证 Python 路径 (应显示 /app/venv/bin/python)
-which python
-
-# 验证沙箱工具
-firejail --version
-pypy3 --version
-
-# 验证源码编译 (应只显示 boot.py)
-find /app -name "*.py" -not -path "*/venv/*"
-```
-
-### 数据库管理
-
-```bash
-# 进入 PostgreSQL
-docker exec -it tianyan-postgres psql -U tianyan -d tianyan
-
-# 查看项目列表
-SELECT project_id, project_name, genre FROM projects;
-
-# 查看角色
-SELECT * FROM characters;
-
-# 进入 Redis
-docker exec -it tianyan-redis redis-cli
-
-# 查看对话 keys
-KEYS conv:*
-```
-
-### 日志文件
+### 日志查看
 
 ```bash
 # 应用日志
@@ -577,74 +475,9 @@ tail -f ./logs/*.log
 ### 清理数据(谨慎!)
 
 ```bash
-# 停止并删除容器 (保留数据)
-docker-compose down
-
-# 停止并删除容器 + 数据 (慎用! 会丢失所有项目数据)
-docker-compose down -v
-
 # 清理数据目录
 rm -rf ./data/*
 ```
-
----
-
-## 8. Docker 镜像内部结构
-
-### 代码已经打包进镜像
-
-项目源码在构建镜像时已经打包进去,不需要在宿主机保留源码:
-
-```
-Docker 镜像内部 (/app)
-├── boot.py              ← 唯一保留的 .py 源文件 (启动入口)
-├── venv/                ← Python 虚拟环境 (所有依赖装在这里)
-│   └── bin/python
-├── app/
-│   ├── __init__.py      ← 保留 (包标识)
-│   ├── agents.pyc       ← 编译后的字节码 (源码已删除)
-│   ├── tools.pyc
-│   ├── agent.pyc
-│   ├── llm.pyc
-│   ├── config.pyc
-│   ├── store.pyc
-│   ├── server.pyc
-│   ├── sandbox.pyc
-│   ├── memory_manager.pyc
-│   └── ... (其他 .pyc)
-├── web/                 ← 前端文件 (HTML/CSS/JS 不编译)
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
-└── data/                ← 数据目录 (挂载到宿主机, 持久化)
-```
-
-### 构建流程
-
-```
-COPY requirements.txt → pip install (清华镜像)
-        ↓
-COPY . .              → 复制全部源码到 /app
-        ↓
-compileall -b         → 编译 .py 为 .pyc
-        ↓
-删除 .py 源文件        → 只保留 boot.py 和 __init__.py
-        ↓
-useradd appuser       → 创建非 root 用户
-        ↓
-CMD ["python", "boot.py"]  → 启动服务
-```
-
-### 数据持久化
-
-以下数据通过 volume 挂载到宿主机,容器重建不丢失:
-
-| 容器路径 | 宿主机路径 | 内容 |
-|---------|-----------|------|
-| `/data` | `./data` | 项目数据、向量索引、用户配置 |
-| `/app/logs` | `./logs` | 应用日志 |
-
-**注意**:代码本身不在挂载列表里,代码在镜像内,更新代码需要重新构建镜像(`docker-compose up -d --build`)。
 
 ---
 
@@ -668,12 +501,18 @@ tianyan/
 │   ├── index.html          # Web 界面
 │   ├── app.js              # 前端逻辑
 │   └── style.css           # UI 样式
-├── Dockerfile              # Docker 构建文件
-├── docker-compose.yml      # 多容器编排(app + postgres + redis)
 ├── .env.example            # 环境变量模板 (可选, 前端界面也能填)
-├── .dockerignore           # Docker 构建排除
-├── boot.py                 # 容器启动入口
 ├── requirements.txt        # Python 依赖
+├── requirements-win.txt    # Windows 依赖
+├── package.json            # npm 包配置
+├── scripts/
+│   ├── install.js          # npm 安装脚本
+│   └── start.js            # npm 启动脚本
+├── start.bat               # Windows 一键启动
+├── start.sh                # Linux/macOS 一键启动
+├── run.py                  # Python 启动入口
+└── ...
+```
 ├── tianyan.bat             # Windows 一键启动脚本
 ├── tianyan.sh              # Linux/macOS 一键启动脚本
 ├── run.py                  # 本地启动入口
@@ -688,7 +527,6 @@ tianyan/
 - **前端**:原生 HTML + CSS + JavaScript(无构建步骤)
 - **数据库**:PostgreSQL(项目/角色/章节) + Redis(短期记忆) + ChromaDB(向量检索) + SQLite(降级)
 - **沙箱**:firejail(系统级隔离) + pypy3(独立解释器) + RestrictedPython(代码预检)
-- **容器**:Docker + docker-compose(多容器编排)
 - **LLM 接入**:litellm(支持 100+ 模型,OpenAI 协议兼容)
 
 ---
@@ -700,7 +538,7 @@ tianyan/
 - **字数控制**:续写时可在指令里指定字数,如「续写 3000 字,重点写主角心理」
 - **多项目管理**:为不同类型的项目创建独立项目,Agent 会自动切换风格
 - **本地模型**:装 Ollama 后 `ollama pull qwen3:14b`,无需 API Key
-- **代理配置**:国内使用国外模型时,在 `.env` 中配置 `PROXY=http://host.docker.internal:7890`
+- **代理配置**:国内使用国外模型时,在 `.env` 中配置 `PROXY=http://127.0.0.1:7890`
 
 ---
 

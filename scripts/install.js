@@ -130,6 +130,8 @@ async function main() {
 
   // 4. 安装核心依赖
   logInfo('[4/6] 安装核心依赖...');
+  // 设置环境变量避免 litellm 超时
+  process.env.LITELLM_LOCAL_MODEL_COST_MAP = 'True';
   const corePackages = [
     'fastapi', 'uvicorn', 'litellm', 'openai',
     'pydantic', 'pydantic-settings', 'PyYAML',

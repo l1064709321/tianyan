@@ -2,6 +2,9 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
+:: 设置环境变量避免 litellm 超时
+set LITELLM_LOCAL_MODEL_COST_MAP=True
+
 echo.
 echo ============================================================
 echo   天衍 - Windows 一键安装

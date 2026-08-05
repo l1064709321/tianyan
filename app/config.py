@@ -215,6 +215,25 @@ def set_default_model(model: str) -> None:
     save_settings()
 
 
+def log_config_safe(config_dict: dict) -> dict:
+    """返回脱敏后的配置字典,用于日志输出。
+
+    自动将包含 KEY/SECRET/PASSWORD/TOKEN 的字段值替换为 ***REDACTED***。
+    """
+    sensitive_keys = {'KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'API_KEY', 'OPENAI_API_KEY',
+                      'DEEPSEEK_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY',
+                      'DASHSCOPE_API_KEY', 'ZAI_API_KEY', 'MOONSHOT_API_KEY',
+                      'XAI_API_KEY', 'MISTRAL_API_KEY', 'VOLCENGINE_API_KEY',
+                      'CUSTOM_API_KEY', 'SILICONFLOW_API_KEY'}
+    redacted = {}
+    for k, v in config_dict.items():
+        if any(s in k.upper() for s in sensitive_keys) or k.upper() in sensitive_keys:
+            redacted[k] = '***REDACTED***' if v else ''
+        else:
+            redacted[k] = v
+    return redacted
+
+
 # 厂商预设(前端"添加模型"快捷选项)
 # 数据核对日期: 2026-08-02(各家官方文档/价格页/release notes)
 PROVIDER_PRESETS = [

@@ -56,7 +56,7 @@ if !errorlevel! neq 0 (
     !PY! -m pip install python-docx pypdf ebooklib beautifulsoup4 Markdown readability-lxml lxml chromadb redis psycopg2-binary RestrictedPython -q
     if !errorlevel! neq 0 (
         echo   [警告] 部分扩展依赖安装失败，核心功能仍可用
-    ) else {
+    ) else (
         echo   [OK] 扩展依赖已安装
     )
     

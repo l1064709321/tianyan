@@ -2,7 +2,7 @@
 
 一个多Agent协同的**天衍**(Web 界面)。7 个 agent 协同,按 5 阶段工作流完成从扫榜调研到定稿入库的完整长篇创作闭环,内置「毒舌总编」审稿机制与质检打回循环。
 
-![Python](https://img.shields.io/badge/Python-3.8+-blue)
+![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green)
 ![Node](https://img.shields.io/badge/Node.js-16+-green)
 ![npm](https://img.shields.io/badge/npm-install-blue)
@@ -523,7 +523,7 @@ tianyan/
 
 ## 🛠 技术栈
 
-- **后端**:Python 3.8+ / FastAPI / litellm(多模型统一调用)
+- **后端**:Python 3.10+ / FastAPI / litellm(多模型统一调用)
 - **前端**:原生 HTML + CSS + JavaScript(无构建步骤)
 - **数据库**:PostgreSQL(项目/角色/章节) + Redis(短期记忆) + ChromaDB(向量检索) + SQLite(降级)
 - **沙箱**:firejail(系统级隔离) + pypy3(独立解释器) + RestrictedPython(代码预检)

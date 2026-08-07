@@ -15,7 +15,7 @@ import yaml
 
 try:
     from pydantic_settings import BaseSettings  # type: ignore
-except Exception:  # pragma: no cover - pydantic v1 fallback
+except ImportError:  # pragma: no cover - pydantic-settings 未安装时降级
     BaseSettings = object  # type: ignore
 
 

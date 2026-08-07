@@ -36,31 +36,59 @@ echo [2/3] 检测依赖...
 if !errorlevel! neq 0 (
     echo   [提示] 依赖未安装，正在自动安装...
     echo.
-    
-    :: 配置 pip 镜像源
-    !PY! -m pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
-    
-    :: 安装核心依赖
-    echo   安装核心依赖 (约1-2分钟)...
-    !PY! -m pip install fastapi uvicorn litellm openai pydantic pydantic-settings PyYAML python-multipart httpx python-dotenv -q
-    if !errorlevel! neq 0 (
-        echo   [错误] 核心依赖安装失败
-        echo   请手动运行: pip install -r requirements-win.txt
+
+    :: 国内镜像源优先, 国外源兜底
+    set "M1=https://pypi.tuna.tsinghua.edu.cn/simple"
+    set "M2=https://mirrors.aliyun.com/pypi/simple/"
+    set "M3=https://repo.huaweicloud.com/repository/pypi/simple/"
+    set "M4=https://pypi.mirrors.ustc.edu.cn/simple/"
+    set "M5=https://mirrors.cloud.tencent.com/pypi/simple/"
+    set "M6=https://pypi.douban.com/simple/"
+    set "M7=https://mirrors.163.com/pypi/simple/"
+    set "M8=https://pypi.org/simple/"
+
+    :: 逐源尝试安装核心依赖 (每个源 10 分钟超时)
+    echo   安装核心依赖 (每个源最多 10 分钟, 自动切换)...
+    set "CORE_OK=0"
+    for %%M in (!M1! !M2! !M3! !M4! !M5! !M6! !M7! !M8!) do (
+        if !CORE_OK! equ 0 (
+            echo     尝试 %%M ...
+            !PY! -m pip install fastapi uvicorn litellm openai pydantic pydantic-settings PyYAML python-multipart httpx python-dotenv -i %%M --timeout 5 --retries 2 -q
+            if !errorlevel! equ 0 (
+                echo   [OK] 核心依赖安装成功
+                set "CORE_OK=1"
+            ) else (
+                echo     [!] 失败, 切换下一个源...
+            )
+        )
+    )
+    if !CORE_OK! equ 0 (
+        echo   [错误] 核心依赖安装失败: 所有源均不可用
+        echo   请手动运行: pip install -r requirements.txt
         pause
         exit /b 1
     )
-    echo   [OK] 核心依赖已安装
-    
-    :: 安装扩展依赖
-    echo   安装扩展依赖 (约2-3分钟)...
-    !PY! -m pip install python-docx pypdf ebooklib beautifulsoup4 Markdown readability-lxml lxml chromadb redis psycopg2-binary RestrictedPython -q
-    if !errorlevel! neq 0 (
-        echo   [警告] 部分扩展依赖安装失败，核心功能仍可用
-    ) else (
-        echo   [OK] 扩展依赖已安装
+
+    :: 逐源尝试安装扩展依赖 (每个源 10 分钟超时, 失败不阻断)
+    echo   安装扩展依赖 (每个源最多 10 分钟, 自动切换)...
+    set "EXT_OK=0"
+    for %%M in (!M1! !M2! !M3! !M4! !M5! !M6! !M7! !M8!) do (
+        if !EXT_OK! equ 0 (
+            echo     尝试 %%M ...
+            !PY! -m pip install python-docx pypdf ebooklib beautifulsoup4 Markdown readability-lxml lxml chromadb redis psycopg2-binary RestrictedPython -i %%M --timeout 5 --retries 2 -q
+            if !errorlevel! equ 0 (
+                echo   [OK] 扩展依赖安装成功
+                set "EXT_OK=1"
+            ) else (
+                echo     [!] 失败, 切换下一个源...
+            )
+        )
     )
-    
-    :: 安装浏览器抓取
+    if !EXT_OK! equ 0 (
+        echo   [警告] 部分扩展依赖安装失败，核心功能仍可用
+    )
+
+    :: 安装浏览器抓取 (可选)
     echo   安装浏览器抓取 (可选)...
     !PY! -m pip install playwright -q >nul 2>&1
     if !errorlevel! equ 0 (

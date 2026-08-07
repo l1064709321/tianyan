@@ -34,14 +34,18 @@ function logSuccess(...args) { log(colors.green, ...args); }
 function logWarn(...args) { log(colors.yellow, ...args); }
 function logError(...args) { log(colors.red, ...args); }
 
-// 检测 Python 命令
+// 检测 Python 命令 (要求 3.10+)
 function findPython() {
   const candidates = ['python3', 'python'];
   for (const cmd of candidates) {
     try {
       const result = execSync(`${cmd} --version`, { encoding: 'utf8', stdio: 'pipe' });
       if (result.includes('Python 3.')) {
-        return cmd;
+        const version = result.trim().split(' ')[1];
+        const [major, minor] = version.split('.').map(Number);
+        if (major === 3 && minor >= 10) {
+          return cmd;
+        }
       }
     } catch (e) {}
   }
@@ -109,10 +113,26 @@ async function main() {
     env: { ...process.env, LITELLM_LOCAL_MODEL_COST_MAP: 'True' },
   });
 
-  // 延迟打开浏览器
-  setTimeout(() => {
-    openBrowser('http://localhost:8000');
-  }, 3000);
+  // 等待服务就绪后打开浏览器 (轮询 /api/health, 最多等 30 秒)
+  const http = require('http');
+  const start = Date.now();
+  const maxWait = 30000;
+  const poll = setInterval(() => {
+    const req = http.get('http://localhost:8000/api/health', { timeout: 2000 }, (res) => {
+      if (res.statusCode === 200) {
+        clearInterval(poll);
+        openBrowser('http://localhost:8000');
+      }
+      res.resume(); // 消费响应体
+    });
+    req.on('error', () => {}); // 忽略连接错误 (服务还没启动)
+    req.on('timeout', () => { req.destroy(); });
+    if (Date.now() - start > maxWait) {
+      clearInterval(poll);
+      // 超时也尝试打开, 让用户看到浏览器错误提示
+      openBrowser('http://localhost:8000');
+    }
+  }, 1000);
 
   // 处理退出信号
   process.on('SIGINT', () => {

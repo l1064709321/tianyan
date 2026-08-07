@@ -36,11 +36,31 @@ echo [1/5] Python:
 !PY! --version
 echo.
 
-:: 2. 配置国内 pip 镜像源 (清华源, 国内最快)
-echo [2/5] 配置国内 pip 镜像源 (清华源)...
-!PY! -m pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
-!PY! -m pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn >nul 2>&1
-echo       已配置清华镜像源
+:: 2. 配置 pip 镜像源 (不预设, 安装时逐源尝试)
+echo [2/5] 检测可用镜像源...
+set "MIRRORS_FOUND=0"
+for %%M in (
+    "https://pypi.tuna.tsinghua.edu.cn/simple"
+    "https://mirrors.aliyun.com/pypi/simple/"
+    "https://repo.huaweicloud.com/repository/pypi/simple/"
+    "https://pypi.mirrors.ustc.edu.cn/simple/"
+    "https://mirrors.cloud.tencent.com/pypi/simple/"
+    "https://pypi.douban.com/simple/"
+    "https://mirrors.163.com/pypi/simple/"
+    "https://pypi.org/simple/"
+) do (
+    if !MIRRORS_FOUND! equ 0 (
+        !PY! -m pip install --dry-run pip -i %%M --timeout 5 -q >nul 2>&1
+        if !errorlevel! equ 0 (
+            !PY! -m pip config set global.index-url %%M >nul 2>&1
+            echo       可用源: %%M
+            set "MIRRORS_FOUND=1"
+        )
+    )
+)
+if !MIRRORS_FOUND! equ 0 (
+    echo       [警告] 所有镜像源均不可用, 使用 pip 默认源
+)
 echo.
 
 :: 3. 升级 pip

@@ -1,4 +1,4 @@
-FROM python:3.8-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
@@ -37,11 +37,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY . .
 
 # ============================================================
-# 编译为 .pyc (代码保护, 保留 boot.py 和 __init__.py)
+# 编译为 .pyc (代码保护, 保留 run.py 和 __init__.py)
 # ============================================================
-RUN python -m compileall -b app/ boot.py && \
+RUN python -m compileall -b app/ run.py && \
     find /app -name "*.py" \
-        ! -name "boot.py" \
+        ! -name "run.py" \
         ! -name "__init__.py" \
         ! -path "*/venv/*" \
         ! -path "*/data/*" \
@@ -65,7 +65,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 EXPOSE 8000
 
 # ============================================================
-# 启动命令: 使用虚拟环境的 Python 执行 boot.py
-# CMD ["python", "boot.py"] 中 python 已在 PATH 中指向 /app/venv/bin/python
+# 启动命令: 使用虚拟环境的 Python 执行 run.py
+# CMD ["python", "run.py"] 中 python 已在 PATH 中指向 /app/venv/bin/python
 # ============================================================
-CMD ["python", "boot.py"]
+CMD ["python", "run.py"]

@@ -32,7 +32,7 @@ services:
       - VOLCENGINE_API_KEY=${VOLCENGINE_API_KEY:-}
       # 自定义模型配置
       - CUSTOM_API_KEY=${CUSTOM_API_KEY:-}
-      - CUSTOM_BASE_URL=${CUSTOM_BASE_URL:-}
+      - CUSTOM_API_BASE=${CUSTOM_API_BASE:-}
       - CUSTOM_MODEL_NAME=${CUSTOM_MODEL_NAME:-}
       # 沙箱配置
       - SANDBOX_ENABLED=${SANDBOX_ENABLED:-true}

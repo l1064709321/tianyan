@@ -52,14 +52,29 @@ def _check_restrictedpython() -> bool:
 def _precheck_code(code: str) -> Optional[str]:
     """用 RestrictedPython 预检代码, 返回错误消息或 None.
 
-    拦截: import os/subprocess, eval, exec, open, __import__ 等.
+    拦截:
+    - RestrictedPython 编译器: eval, exec, __import__ 等
+    - 手动检查: import os/subprocess/shutil/socket 等危险模块
     """
+    # 1. 手动检查危险 import (RestrictedPython 不拦截普通 import)
+    dangerous_modules = {
+        'os', 'subprocess', 'shutil', 'socket', 'http', 'urllib',
+        'requests', 'httpx', 'aiohttp', 'ctypes', 'signal',
+        'multiprocessing', 'threading', 'importlib', 'code',
+        'codeop', 'compileall', 'zipimport', 'pkgutil',
+    }
+    import re as _re
+    # 匹配 `import xxx` 和 `from xxx import yyy`
+    for m in _re.finditer(r'^(?:import|from)\s+(\w+)', code, _re.MULTILINE):
+        mod = m.group(1)
+        if mod in dangerous_modules:
+            return f"代码预检失败: 禁止导入模块 '{mod}' (沙箱安全限制)"
+
+    # 2. RestrictedPython 编译器检查 (eval, exec, __import__ 等)
     if not _check_restrictedpython():
-        return None  # RestrictedPython 不可用, 跳过预检
+        return None  # RestrictedPython 不可用, 跳过编译检查
     try:
         from RestrictedPython import compile_restricted
-        from RestrictedPython.Guards import guarded_getattr
-        # 尝试编译, 不执行
         bytecode = compile_restricted(code, "<sandbox>", "exec")
         if hasattr(bytecode, "errors") and bytecode.errors:
             return f"代码预检失败: {'; '.join(bytecode.errors)}"

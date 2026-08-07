@@ -528,7 +528,6 @@ tianyan/
 ├── run.py                  # Python 启动入口 (唯一入口)
 └── README.md               # 本文件
 
----
 
 ## 🛠 技术栈
 
@@ -538,7 +537,6 @@ tianyan/
 - **沙箱**:firejail(系统级隔离) + pypy3(独立解释器) + RestrictedPython(代码预检)
 - **LLM 接入**:litellm(支持 100+ 模型,OpenAI 协议兼容)
 
----
 
 ## 📝 使用建议
 
@@ -549,7 +547,6 @@ tianyan/
 - **本地模型**:装 Ollama 后 `ollama pull qwen3:14b`,无需 API Key
 - **代理配置**:国内使用国外模型时,在 `.env` 中配置 `PROXY=http://127.0.0.1:7890`
 
----
 
 ## 📜 License
 

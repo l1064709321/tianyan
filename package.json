@@ -1,6 +1,6 @@
 {
   "name": "tianyan",
-  "version": "0.0.0.0.0.0.4",
+  "version": "0.0.4",
   "description": "天衍 - 多Agent协同小说创作系统, 7个专家Agent, 5阶段写作流水线, 33维审计, 111位白金作家语料库",
   "main": "run.py",
   "scripts": {
@@ -24,7 +24,7 @@
     "url": "https://github.com/l1064709321/tianyan.git"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org"
   },
   "bugs": {
     "url": "https://github.com/l1064709321/tianyan/issues"

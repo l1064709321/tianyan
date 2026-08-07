@@ -64,11 +64,15 @@ def _precheck_code(code: str) -> Optional[str]:
         'codeop', 'compileall', 'zipimport', 'pkgutil',
     }
     import re as _re
-    # 匹配 `import xxx` 和 `from xxx import yyy`
-    for m in _re.finditer(r'^(?:import|from)\s+(\w+)', code, _re.MULTILINE):
+    # 匹配 `import xxx` 和 `from xxx import yyy` (支持缩进)
+    for m in _re.finditer(r'^\s*(?:import|from)\s+(\w+)', code, _re.MULTILINE):
         mod = m.group(1)
         if mod in dangerous_modules:
             return f"代码预检失败: 禁止导入模块 '{mod}' (沙箱安全限制)"
+
+    # 额外检查: __import__ 调用 (绕过普通 import 语句的方式)
+    if _re.search(r'__import__\s*\(', code):
+        return "代码预检失败: 禁止使用 __import__ (沙箱安全限制)"
 
     # 2. RestrictedPython 编译器检查 (eval, exec, __import__ 等)
     if not _check_restrictedpython():

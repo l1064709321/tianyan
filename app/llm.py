@@ -155,39 +155,24 @@ def _normalize_model(model: str, api_base: Optional[str] = None) -> str:
 
 
 def _prepare_env(cfg: ModelConfig) -> str:
-    """根据 provider 前缀把 api_key/base 写入对应环境变量,
-    litellm 会自动读取。返回规范后的 model 名 (传给 litellm 用)。"""
-    norm_model = _normalize_model(cfg.model, cfg.api_base)
-    provider = norm_model.split("/", 1)[0].lower() if "/" in norm_model else "openai"
+    """根据 provider 前缀返回规范后的 model 名 (传给 litellm 用)。
+
+    不再修改全局 os.environ, 避免并发调用不同 provider 时互相覆盖 Key。
+    api_key/api_base 通过 litellm 参数直接传递。
+    """
+    return _normalize_model(cfg.model, cfg.api_base)
+
+
+def _build_litellm_kwargs(cfg: ModelConfig, **extra) -> dict:
+    """构建 litellm 调用参数, 将 api_key/api_base 直接传入而非写环境变量。"""
+    norm_model = _prepare_env(cfg)
+    kwargs = {"model": norm_model, **extra}
+    # 直接传 api_key/api_base, 避免全局环境污染
     if cfg.api_key:
-        if provider in ("openai",):
-            os.environ["OPENAI_API_KEY"] = cfg.api_key
-        elif provider in ("anthropic",):
-            os.environ["ANTHROPIC_API_KEY"] = cfg.api_key
-        elif provider in ("gemini",):
-            os.environ["GEMINI_API_KEY"] = cfg.api_key
-        elif provider in ("deepseek",):
-            os.environ["DEEPSEEK_API_KEY"] = cfg.api_key
-        elif provider in ("dashpipe", "dashscope"):
-            os.environ["DASHSCOPE_API_KEY"] = cfg.api_key
-        elif provider in ("zhipu", "glm"):
-            os.environ["ZHIPUAI_API_KEY"] = cfg.api_key
-        elif provider in ("moonshot",):
-            os.environ["MOONSHOT_API_KEY"] = cfg.api_key
-        elif provider in ("ollama",):
-            os.environ["OLLAMA_API_BASE"] = cfg.api_base or "http://localhost:11434"
-        elif provider in ("siliconflow",):
-            os.environ["SILICONFLOW_API_KEY"] = cfg.api_key
-        elif provider in ("openrouter",):
-            os.environ["OPENROUTER_API_KEY"] = cfg.api_key
-        elif provider in ("together_ai", "together"):
-            os.environ["TOGETHERAI_API_KEY"] = cfg.api_key
-        elif provider in ("fireworks_ai", "fireworks"):
-            os.environ["FIREWORKS_API_KEY"] = cfg.api_key
-        # openai 兼容的第三方 (如各厂兼容站) 用 openai/ 前缀 + api_base
-    if cfg.api_base and provider in ("openai",):
-        os.environ["OPENAI_API_BASE"] = cfg.api_base
-    return norm_model
+        kwargs["api_key"] = cfg.api_key
+    if cfg.api_base:
+        kwargs["api_base"] = cfg.api_base
+    return kwargs
 
 
 async def chat(
@@ -209,21 +194,17 @@ async def chat(
     """
     if litellm is None:
         raise LLMError("litellm 未安装,请先 pip install -r requirements.txt")
-    norm_model = _prepare_env(cfg)
-    msgs = list(messages)
     use_prefill = bool(assistant_prefill) and not response_format
     if use_prefill:
         msgs.append({"role": "assistant", "content": assistant_prefill})
-    kwargs: dict[str, Any] = {
-        "model": norm_model,
-        "messages": msgs,
-        "temperature": temperature if temperature is not None else cfg.temperature,
-        "max_tokens": max_tokens if max_tokens is not None else cfg.max_tokens,
-        # 关键: 不设 timeout, 让 litellm 用全局 None (永不超时)
-        "timeout": None,
-    }
-    # 注入全局共享 httpx 连接池 (避免每次新建连接)
     _client = _get_http_client()
+    kwargs = _build_litellm_kwargs(
+        cfg,
+        messages=msgs,
+        temperature=temperature if temperature is not None else cfg.temperature,
+        max_tokens=max_tokens if max_tokens is not None else cfg.max_tokens,
+        timeout=None,
+    )
     if _client is not None:
         kwargs["client"] = _client
     if tools:
@@ -268,22 +249,18 @@ async def stream(
     """
     if litellm is None:
         raise LLMError("litellm 未安装")
-    norm_model = _prepare_env(cfg)
-    # reasoning 模型 (如 agnes-2.0-flash) 会先吐 reasoning_content (思考过程, content=None),
-    # 再吐 content (正文)。思考也消耗 max_tokens, 故 stream 时放大额度避免正文被截断。
     eff_max = max_tokens
     if max_tokens is not None and max_tokens < 4000:
         eff_max = max_tokens * 4
-    kwargs: dict[str, Any] = {
-        "model": norm_model,
-        "messages": messages,
-        "temperature": temperature if temperature is not None else cfg.temperature,
-        "max_tokens": eff_max if eff_max is not None else cfg.max_tokens,
-        "stream": True,
-        "timeout": None,  # 关键: 永不超时
-    }
-    # 注入全局共享 httpx 连接池
     _client = _get_http_client()
+    kwargs = _build_litellm_kwargs(
+        cfg,
+        messages=messages,
+        temperature=temperature if temperature is not None else cfg.temperature,
+        max_tokens=eff_max if eff_max is not None else cfg.max_tokens,
+        stream=True,
+        timeout=None,
+    )
     if _client is not None:
         kwargs["client"] = _client
     if stop:
@@ -379,13 +356,12 @@ async def test_connection(cfg: ModelConfig) -> dict:
     if litellm is None:
         return {"ok": False, "message": "litellm 未安装, 请运行 pip install litellm"}
     try:
-        norm_model = _prepare_env(cfg)
-        kwargs: dict[str, Any] = {
-            "model": norm_model,
-            "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 1,
-            "timeout": 15,  # 测试用短超时, 15s 够了
-        }
+        kwargs = _build_litellm_kwargs(
+            cfg,
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=1,
+            timeout=15,
+        )
         _client = _get_http_client()
         if _client is not None:
             kwargs["client"] = _client

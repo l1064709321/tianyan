@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Optional
 
@@ -21,6 +22,8 @@ from . import store
 from .config import get_settings
 from .deai import run_full_deai_check
 from .llm import chat, stream
+
+logger = logging.getLogger("tianyan.tools")
 
 
 # ---------------- 通用辅助 ----------------
@@ -90,31 +93,26 @@ def _retrieve_context(pid: str, query: str, k: int = 6) -> str:
 
     改进: 优先使用向量语义检索, 降级到关键词匹配。
     """
-    import asyncio
+    # 尝试向量语义检索
     try:
         from .vector_store import hybrid_retrieve
-        # 如果已在事件循环中, 直接用同步方式降级
-        try:
-            loop = asyncio.get_running_loop()
-            # 已在异步上下文中, 创建 task
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # 在异步上下文中: 用 nest_asyncio 或直接降级
+            # 创建新的事件循环在后台线程执行
             import concurrent.futures
-            # 向量检索需要异步, 这里用降级的关键词方案
-            raise RuntimeError("在异步上下文中, 使用关键词降级")
-        except RuntimeError:
-            pass
-        # 尝试获取结果
-        try:
-            result = asyncio.get_event_loop().run_until_complete(
-                hybrid_retrieve(pid, query, top_k=k)
-            )
-            if result and result != "(无可用上文)":
-                return result
-        except Exception:
-            pass
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, hybrid_retrieve(pid, query, top_k=k))
+                result = future.result(timeout=10)
+        else:
+            result = loop.run_until_complete(hybrid_retrieve(pid, query, top_k=k))
+        if result and result != "(无可用上文)":
+            return result
     except Exception:
         pass
 
-    # 降级: 原版关键词检索
+    # 降级: 关键词检索
     s = get_settings()
     k = k or s.retrieve_k
     chunks = store.list_chunks(pid)

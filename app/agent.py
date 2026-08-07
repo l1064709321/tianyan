@@ -139,7 +139,7 @@ async def _chat_with_retry(
     messages: list[dict],
     cfg,
     *,
-    tools: list | None = None,
+    tool_schemas: list | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     response_format: dict | None = None,
@@ -161,7 +161,7 @@ async def _chat_with_retry(
         try:
             return await chat(
                 messages, cfg,
-                tools=tools, temperature=temperature, max_tokens=max_tokens,
+                tools=tool_schemas, temperature=temperature, max_tokens=max_tokens,
                 response_format=response_format, assistant_prefill=assistant_prefill,
                 stop=stop,
             )
@@ -386,7 +386,11 @@ def _trim_for_window(msgs: list[dict]) -> list[dict]:
     3. 关键约束不变:assistant(tool_calls)+tool 必须成对完整
     4. ===== 新增: token 估算 + 80% 安全余量检查 =====
        压缩后仍检查总 token, 若超过 MODEL_CONTEXT_LIMIT * SAFE_RATIO 则继续截断
+    5. ===== 修复: 不原地修改消息, 创建副本避免污染原始数据 =====
     """
+    import copy
+    # 创建浅拷贝列表, 避免修改原始数据
+    msgs = [dict(m) for m in msgs]
     sys_msgs = [m for m in msgs if m.get("role") == "system"]
     rest = [m for m in msgs if m.get("role") != "system"]
     if len(rest) <= 2:
@@ -727,7 +731,7 @@ async def _run_sub_agent(
             # 默认用非 reasoning 模型 (如 agnes-1.5-flash),4096 够用。
             # 若用 reasoning 模型 (agnes-2.0-flash) 需在 ModelConfig.max_tokens 调大,
             # 但 reasoning 模型做 agent loop 工具调用决策不可靠,不推荐。
-            resp = await _chat_with_retry(messages, s.default_model, tools=tool_schema)
+            resp = await _chat_with_retry(messages, s.default_model, tool_schemas=tool_schema)
         except Exception as e:
             logger.error(f"[{agent_name}] step={step} LLM 调用失败: {e}")
             if run_id:
@@ -1036,7 +1040,7 @@ async def run(
         t0 = time.time()
         # 用 task 包装 LLM 调用, 等待期间定期 yield 心跳, 防前端误判断连
         hb = s.sse_heartbeat_interval
-        llm_task = asyncio.ensure_future(_chat_with_retry(messages, s.default_model, tools=tool_schema))
+        llm_task = asyncio.ensure_future(_chat_with_retry(messages, s.default_model, tool_schemas=tool_schema))
         try:
             if hb <= 0:
                 resp = await llm_task

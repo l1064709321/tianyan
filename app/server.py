@@ -28,6 +28,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------- API 认证 (可选) ----------
+# 设置 TIANYAN_API_KEY 环境变量后, 所有 /api/* 请求必须带 Authorization: Bearer <key>
+# 不设置则无认证 (向后兼容, 适合本地开发)
+_API_KEY = os.environ.get("TIANYAN_API_KEY", "").strip()
+
+@app.middleware("http")
+async def _auth_middleware(request, call_next):
+    if _API_KEY and request.url.path.startswith("/api/"):
+        auth = request.headers.get("authorization", "")
+        if not auth.endswith(_API_KEY):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return await call_next(request)
+
 
 @app.on_event("startup")
 def _startup() -> None:

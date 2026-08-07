@@ -59,7 +59,26 @@
 
 ## 🚀 快速开始
 
-### 方式一: 一键启动 (推荐)
+### 方式一: npm 安装 (推荐)
+
+```bash
+git clone https://github.com/l1064709321/tianyan.git
+cd tianyan
+npm install
+npm start
+```
+
+`npm install` 会自动:
+- 检测 Python 3.10+
+- 逐源尝试下载依赖 (国内 7 个镜像源 + 国外 2 个源, 每源 10 分钟超时自动切换)
+- 安装核心依赖 + 扩展依赖 + Playwright 浏览器内核
+
+`npm start` 会自动:
+- 检查依赖是否完整
+- 启动 Python 服务
+- 等服务就绪后自动打开浏览器
+
+### 方式二: 一键启动脚本
 
 **Windows**:
 ```bash
@@ -77,27 +96,16 @@ chmod +x start.sh
 ```
 
 `start.bat` / `start.sh` 会自动:
-- 检测 Python 环境
-- 检测并安装全部依赖 (国内镜像源加速)
+- 检测 Python 3.10+ 环境
+- 逐源尝试下载依赖 (国内 7 个镜像源 + 国外 2 个源, 每源 10 分钟超时自动切换)
 - 启动服务
-
-启动后浏览器打开 **http://localhost:8000**
-
-### 方式二: npm 安装
-
-```bash
-git clone https://github.com/l1064709321/tianyan.git
-cd tianyan
-npm install
-npm start
-```
 
 ### 方式三: pip 安装
 
 ```bash
 git clone https://github.com/l1064709321/tianyan.git
 cd tianyan
-pip install -r requirements-win.txt
+pip install -r requirements.txt
 python run.py
 ```
 
@@ -109,9 +117,9 @@ python run.py
 2. 点击页面右上角 **设置** 按钮
 3. 选择 **添加模型**
 4. 填入 API Key 和模型信息
-5. 保存即可,密钥会自动持久化,重启不丢失
+5. 保存即可, 密钥会自动持久化, 重启不丢失
 
-推荐使用 DeepSeek (国内直连,无需代理): https://platform.deepseek.com
+推荐使用 DeepSeek (国内直连, 无需代理): https://platform.deepseek.com
 
 ---
 
@@ -131,32 +139,37 @@ python run.py
 
 详见上方 [快速开始](#-快速开始) 部分。
 
-### 一键启动逻辑
-
-`start.bat`(Windows) / `start.sh`(Linux/macOS) 自动完成以下步骤:
-
-1. **检测 Python 环境** — 查找 python3 或 python,验证版本 ≥ 3.10
-2. **检测依赖** — 检查 fastapi 是否已安装
-3. **自动安装依赖** — 若未安装,使用国内镜像源(pip.conf 配置)安装全部依赖
-4. **设置环境变量** — `LITELLM_LOCAL_MODEL_COST_MAP=True` 避免 litellm 启动超时
-5. **启动服务** — 运行 `python run.py`,监听 `http://localhost:8000`
-
 ### npm 安装逻辑
 
 `npm install` 自动执行 `scripts/install.js`:
 
 1. 检测 Python 3.10+
-2. 配置 pip 镜像源(清华/阿里/华为,依次尝试)
-3. 安装核心依赖(fastapi/uvicorn/litellm 等)
-4. 安装扩展依赖(chromadb/redis/psycopg2/RestrictedPython)
-5. 安装 Playwright 浏览器内核(可选)
+2. 升级 pip
+3. 逐源尝试安装依赖 (国内 7 源 + 国外 2 源, 每源 10 分钟超时自动切换)
+   - 国内: 清华 / 阿里云 / 华为云 / 中科大 / 腾讯云 / 豆瓣 / 网易
+   - 国外: 官方源 / Google 源
+4. 先测试所有源连通性 (5 秒/个), 通的优先尝试
+5. 安装核心依赖 (fastapi/uvicorn/litellm 等)
+6. 安装扩展依赖 (chromadb/redis/psycopg2/RestrictedPython)
+7. 安装 Playwright 浏览器内核 (可选)
 
 `npm start` 自动执行 `scripts/start.js`:
 
 1. 检查依赖是否已安装
 2. 设置 `LITELLM_LOCAL_MODEL_COST_MAP=True`
 3. 启动 Python 服务
-4. 自动打开浏览器
+4. 轮询 `http://localhost:8000/api/health` 确认服务就绪
+5. 自动打开浏览器
+
+### 一键启动逻辑
+
+`start.bat`(Windows) / `start.sh`(Linux/macOS) 自动完成以下步骤:
+
+1. **检测 Python 环境** — 查找 python3 或 python, 验证版本 ≥ 3.10
+2. **检测依赖** — 检查 fastapi 是否已安装
+3. **自动安装依赖** — 若未安装, 逐源尝试 (国内 7 源 + 国外 2 源, 每源 10 分钟超时)
+4. **设置环境变量** — `LITELLM_LOCAL_MODEL_COST_MAP=True` 避免 litellm 启动超时
+5. **启动服务** — 运行 `python run.py`, 监听 `http://localhost:8000`
 
 ---
 
@@ -186,10 +199,10 @@ cp .env.example .env
 |--------|------|--------|------|
 | **模型配置** | | | |
 | `OPENAI_API_KEY` | DeepSeek/OpenAI API Key | - | 否(前端可填) |
-| `OPENAI_BASE_URL` | API 基础 URL | `https://api.deepseek.com/v1` | 否 |
+| `OPENAI_API_BASE` | API 基础 URL | `https://api.deepseek.com/v1` | 否 |
 | `OPENAI_MODEL` | 默认模型名 | `deepseek-chat` | 否 |
 | `CUSTOM_API_KEY` | 自定义模型 Key(优先级更高) | - | 否 |
-| `CUSTOM_BASE_URL` | 自定义模型 Base URL | - | 否 |
+| `CUSTOM_API_BASE` | 自定义模型 Base URL | - | 否 |
 | `CUSTOM_MODEL_NAME` | 自定义模型名 | - | 否 |
 | **其他模型** | | | |
 | `DEEPSEEK_API_KEY` | DeepSeek 专用 Key | - | 否 |
@@ -285,7 +298,7 @@ git clone https://github.com/l1064709321/tianyan.git
 cd tianyan
 
 # 2. 装依赖
-pip install -r requirements-win.txt
+pip install -r requirements.txt
 
 # 3. 启动
 python run.py
@@ -451,15 +464,17 @@ SANDBOX_TIMEOUT=30      # 超时秒数 (默认 30 秒)
 ### 启动与停止
 
 ```bash
-# 启动服务
-python run.py
+# 方式一: npm (推荐)
+npm install
+npm start
 
-# 或使用一键启动
+# 方式二: 一键启动脚本
 start.bat          # Windows
 ./start.sh         # Linux/macOS
 
-# 或使用 npm
-npm start
+# 方式三: pip
+pip install -r requirements.txt
+python run.py
 ```
 
 ### 日志查看
@@ -504,20 +519,14 @@ tianyan/
 ├── .env.example            # 环境变量模板 (可选, 前端界面也能填)
 ├── requirements.txt        # Python 依赖
 ├── requirements-win.txt    # Windows 依赖
-├── package.json            # npm 包配置
+├── package.json            # npm 包配置 (tianyan@0.0.4)
 ├── scripts/
-│   ├── install.js          # npm 安装脚本
-│   └── start.js            # npm 启动脚本
+│   ├── install.js          # npm 安装脚本 (逐源尝试 + 10分钟超时)
+│   └── start.js            # npm 启动脚本 (轮询 health + 自动开浏览器)
 ├── start.bat               # Windows 一键启动
 ├── start.sh                # Linux/macOS 一键启动
-├── run.py                  # Python 启动入口
-└── ...
-```
-├── tianyan.bat             # Windows 一键启动脚本
-├── tianyan.sh              # Linux/macOS 一键启动脚本
-├── run.py                  # 本地启动入口
+├── run.py                  # Python 启动入口 (唯一入口)
 └── README.md               # 本文件
-```
 
 ---
 

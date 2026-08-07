@@ -20,8 +20,8 @@ done
 DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 # 跨平台临时目录: 优先 TMPDIR, 否则 /tmp
 TMP_DIR="${TMPDIR:-/tmp}"
-PID_FILE="${TMP_DIR}/novel-agent.pid"
-LOG_FILE="${TMP_DIR}/novel-agent.log"
+PID_FILE="${TMP_DIR}/tianyan.pid"
+LOG_FILE="${TMP_DIR}/tianyan.log"
 PORT=8000
 URL="http://localhost:${PORT}/"
 

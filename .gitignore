@@ -39,3 +39,5 @@ screenshots/
 # Playwright 浏览器内核 (不推荐装项目内: 平台二进制跨机不通用)
 # 内核装各平台系统目录, 首次使用跑: ./setup_browser.sh (Linux/macOS) 或 setup_browser.bat (Windows)
 .browsers/
+tianyan_promo.mp4
+tianyan_preview.png

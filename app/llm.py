@@ -9,7 +9,7 @@ import logging
 import os
 from typing import Any, AsyncIterator, Optional
 
-logger = logging.getLogger("novel_agent.llm")
+logger = logging.getLogger("tianyan.llm")
 
 try:
     import httpx

@@ -8,7 +8,7 @@
 灵感来源:
 - happy-llm 的 Agent 自评分机制
 - dive-into-llms Ch9 的置信度评分
-- novel-agent 原有的 review_chapter (毒舌审稿) 工具
+- tianyan 原有的 review_chapter (毒舌审稿) 工具
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from typing import Optional
 from .config import get_settings
 from .llm import chat
 
-logger = logging.getLogger("novel_agent")
+logger = logging.getLogger("tianyan")
 
 # 自评阈值: 低于此分数触发重写
 REFLECTION_THRESHOLD = 6

@@ -4,8 +4,8 @@
 
 数据来源:
 - 内置技能: 静态常量 BUILTIN_SKILLS (12 个工具,来自 skill_adapter + skill_library)
-- 自定义技能: ~/.novel-agent/skills_custom.json (用户在前端添加的 prompt 模板)
-- 启用状态: ~/.novel-agent/skills_enabled.json (开关持久化)
+- 自定义技能: ~/.tianyan/skills_custom.json (用户在前端添加的 prompt 模板)
+- 启用状态: ~/.tianyan/skills_enabled.json (开关持久化)
 
 API:
 - list_skills(): 返回所有技能 (内置 + 自定义) + 启用状态 + 调用次数
@@ -23,8 +23,8 @@ import json
 import os
 from typing import Optional
 
-# 持久化路径 (~/.novel-agent/)
-_USER_DIR = os.path.expanduser("~/.novel-agent")
+# 持久化路径 (~/.tianyan/)
+_USER_DIR = os.path.expanduser("~/.tianyan")
 _CUSTOM_PATH = os.path.join(_USER_DIR, "skills_custom.json")
 _ENABLED_PATH = os.path.join(_USER_DIR, "skills_enabled.json")
 _USAGE_PATH = os.path.join(_USER_DIR, "skills_usage.json")

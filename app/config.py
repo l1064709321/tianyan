@@ -1,8 +1,8 @@
-"""novel-agent 配置:多模型 provider 自动选择与统一管理。
+"""tianyan 配置:多模型 provider 自动选择与统一管理。
 
 配置来源优先级:
 1. config.yaml (可选, 用户可放项目根目录)
-2. 环境变量 (NOVEL_AGENT_ 前缀, 或各 provider 的标准 key 如 OPENAI_API_KEY)
+2. 环境变量 (TIANYAN_ 前缀, 或各 provider 的标准 key 如 OPENAI_API_KEY)
 3. 默认值
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ class ModelConfig:
 
 @dataclass
 class Settings:
-    data_dir: str = os.path.expanduser("~/.novel-agent")
+    data_dir: str = os.path.expanduser("~/.tianyan")
     db_path: str = ""
     upload_dir: str = ""
     default_model: ModelConfig = field(default_factory=ModelConfig)
@@ -95,12 +95,12 @@ def _model_from_dict(d: dict) -> ModelConfig:
 
 def load_settings(config_path: Optional[str] = None) -> Settings:
     """加载配置。config_path 缺省依次查找:
-    $NOVEL_AGENT_CONFIG, ./config.yaml, ~/.novel-agent/config.yaml
+    $TIANYAN_CONFIG, ./config.yaml, ~/.tianyan/config.yaml
     """
     global _config_path
     path = config_path or os.environ.get(
-        "NOVEL_AGENT_CONFIG",
-        os.path.join(os.path.expanduser("~/.novel-agent"), "config.yaml"),
+        "TIANYAN_CONFIG",
+        os.path.join(os.path.expanduser("~/.tianyan"), "config.yaml"),
     )
     if not os.path.exists(path):
         path = "config.yaml"
@@ -108,7 +108,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     raw = _load_yaml(path)
 
     data_dir = raw.get("data_dir") or os.environ.get(
-        "NOVEL_AGENT_DATA_DIR", os.path.expanduser("~/.novel-agent")
+        "TIANYAN_DATA_DIR", os.path.expanduser("~/.tianyan")
     )
     os.makedirs(data_dir, exist_ok=True)
     upload_dir = os.path.join(data_dir, "uploads")
@@ -173,7 +173,7 @@ def _model_to_dict(m: ModelConfig) -> dict:
 def save_settings() -> None:
     """把当前 settings 落盘到 config.yaml,持久化自定义模型/密钥/参数。
 
-    注意:api_key 会明文写入 yaml 文件,文件位于 data_dir (默认 ~/.novel-agent/)。
+    注意:api_key 会明文写入 yaml 文件,文件位于 data_dir (默认 ~/.tianyan/)。
     由用户自行管控文件权限。这是用户明确要求的自定义模型持久化功能。
     """
     global _config_path

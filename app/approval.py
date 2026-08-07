@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-logger = logging.getLogger("novel_agent")
+logger = logging.getLogger("tianyan")
 
 
 @dataclass

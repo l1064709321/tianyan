@@ -186,9 +186,9 @@ async def _chat_with_retry(
 # 配置: 同时输出到 stderr (uvicorn 控制台) 和系统临时目录
 _AGENT_LOG = os.environ.get(
     "NA_AGENT_LOG",
-    os.path.join(tempfile.gettempdir(), "novel-agent-agent.log"),
+    os.path.join(tempfile.gettempdir(), "tianyan-agent.log"),
 )
-logger = logging.getLogger("novel_agent")
+logger = logging.getLogger("tianyan")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     _fmt = logging.Formatter(

@@ -1,5 +1,5 @@
 @echo off
-:: Novel Agent 一键管理命令 (Windows)
+:: 天衍 一键管理命令 (Windows)
 :: 用法:
 ::   na          启动服务 (默认)
 ::   na start    启动
@@ -14,8 +14,8 @@ set "CMD=%~1"
 if "%CMD%"=="" set "CMD=start"
 
 set "DIR=%~dp0"
-set "PID_FILE=%TEMP%\novel-agent.pid"
-set "LOG_FILE=%TEMP%\novel-agent.log"
+set "PID_FILE=%TEMP%\tianyan.pid"
+set "LOG_FILE=%TEMP%\tianyan.log"
 set "PORT=8000"
 set "URL=http://localhost:%PORT%/"
 
@@ -53,7 +53,7 @@ if exist "%PID_FILE%" (
         exit /b 0
     )
 )
-echo 启动 Novel Agent...
+echo 启动 天衍...
 cd /d "%DIR%"
 start /b %PY% run.py >"%LOG_FILE%" 2>&1
 :: 等待服务启动

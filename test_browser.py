@@ -4,7 +4,7 @@ import sys
 from playwright.sync_api import sync_playwright
 
 BASE_URL = "http://localhost:8000"
-SCREENSHOT_DIR = "/workspace/novel-agent/screenshots"
+SCREENSHOT_DIR = "/workspace/tianyan/screenshots"
 
 def test_all():
     import os

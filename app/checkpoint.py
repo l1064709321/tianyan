@@ -20,7 +20,7 @@ from typing import Optional
 from .config import get_settings
 from . import store
 
-logger = logging.getLogger("novel_agent")
+logger = logging.getLogger("tianyan")
 
 
 def _checkpoint_dir(pid: str) -> str:

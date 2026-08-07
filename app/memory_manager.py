@@ -21,7 +21,7 @@ import time
 import uuid
 from typing import Any, Optional
 
-logger = logging.getLogger("novel_agent.memory")
+logger = logging.getLogger("tianyan.memory")
 
 # 检查可用性
 try:

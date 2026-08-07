@@ -758,7 +758,7 @@ WORKFLOW_PHASES = [
 
 def get_prompt(name: str) -> str:
     base = AGENT_PROMPTS.get(name, AGENT_PROMPTS[DEFAULT_AGENT])
-    # 注入用户已启用的自定义技能 prompt (skill_market 持久化在 ~/.novel-agent/)
+    # 注入用户已启用的自定义技能 prompt (skill_market 持久化在 ~/.tianyan/)
     try:
         from . import skill_market
         custom_prompts = skill_market.get_custom_skill_prompts([name, DEFAULT_AGENT])

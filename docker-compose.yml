@@ -16,7 +16,7 @@ services:
       - ./logs:/app/logs
     environment:
       # 数据目录
-      - NOVEL_AGENT_DATA_DIR=/data
+      - TIANYAN_DATA_DIR=/data
       # ===== API Key: 从 .env 文件自动读取 =====
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}

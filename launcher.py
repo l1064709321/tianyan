@@ -268,7 +268,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({
                 'ok': ok,
                 'app_url': APP_URL,
-                'error': None if ok else f'na start 失败,请查看 {os.path.join(tempfile.gettempdir(), "novel-agent.log")}',
+                'error': None if ok else f'na start 失败,请查看 {os.path.join(tempfile.gettempdir(), "tianyan.log")}',
             }).encode())
         else:
             self.send_response(404)

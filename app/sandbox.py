@@ -23,7 +23,7 @@ import tempfile
 import time
 from typing import Optional
 
-logger = logging.getLogger("novel_agent.sandbox")
+logger = logging.getLogger("tianyan.sandbox")
 
 # 沙箱配置 (从环境变量读取, 有默认值)
 SANDBOX_ENABLED = os.environ.get("SANDBOX_ENABLED", "true").lower() in ("true", "1", "yes")

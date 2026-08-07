@@ -10,7 +10,7 @@ echo "==> [1/4] 确认 git 仓库..."
 
 echo "==> [2/4] 扫描 .gitignore 必含项..."
 MISSING=()
-for f in config.yaml __pycache__ data .novel-agent "*.log"; do
+for f in config.yaml __pycache__ data .tianyan "*.log"; do
   grep -qE "^${f//\*/\\*}" .gitignore 2>/dev/null || MISSING+=("$f")
 done
 if [ ${#MISSING[@]} -gt 0 ]; then

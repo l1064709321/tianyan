@@ -1,5 +1,5 @@
 """技能适配层: 把 Online-writing-skill 的 NovelDeconstructionSkill 内核
-暴露给 novel-agent 的工具系统调用。
+暴露给 tianyan 的工具系统调用。
 
 架构:
 - 内核层 (data/skills_core.py): 5686 行原样复制的技能实现,不改一行
@@ -7,13 +7,13 @@
   - 含 4000+ 行 NOVEL_DECONSTRUCTION_DB 拆解数据库
   - 33 维 NovelAuditor / AIDetector / ContinuationEngine / StyleImitator
   - OpeningDiagnosis / EditorialPipeline
-- 适配层 (本文件): 薄封装,把内核方法对接到 novel-agent 的工具签名
+- 适配层 (本文件): 薄封装,把内核方法对接到 tianyan 的工具签名
   - 单例化 NovelDeconstructionSkill (避免重复加载 4000 行 DB)
   - 输入参数适配 (chapter_id -> 取章节正文 -> 传给内核)
   - 输出格式适配 (内核返回 str 报告,适配层包装成 dict 给工具系统)
 
 集成自: https://github.com/l1064709321/Online-writing-skill
-理念: 把整个仓库作为"写作技能"内核, novel-agent 调用它获得专业写作能力,
+理念: 把整个仓库作为"写作技能"内核, tianyan 调用它获得专业写作能力,
 而不是自己重新实现审计/拆解/仿写/代笔。内核是专业的, agent 是调度者。
 """
 from __future__ import annotations

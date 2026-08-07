@@ -22,7 +22,7 @@ import numpy as np
 
 from .config import get_settings
 
-logger = logging.getLogger("novel_agent")
+logger = logging.getLogger("tianyan")
 
 # 缓存 embedding 结果 (避免重复调用 API)
 _embedding_cache: dict[str, list[float]] = {}

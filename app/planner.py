@@ -23,7 +23,7 @@ from .config import get_settings
 from .llm import chat
 from . import store
 
-logger = logging.getLogger("novel_agent")
+logger = logging.getLogger("tianyan")
 
 
 @dataclass

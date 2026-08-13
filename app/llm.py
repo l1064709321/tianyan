@@ -22,9 +22,12 @@ try:
     litellm.set_verbose = False
     litellm.drop_params = True
     litellm.modify_params = True
-    # ===== 关键修复: litellm 全局超时设为 None (永不超时) =====
+    # ===== 关键修复: litellm 全局超时 (永不超时) =====
     # 原版 _HTTP_TIMEOUT=60 导致 LLM 思考期间(>60s)请求被掐断 → ERR_STREAM_PREMATURE_CLOSE
-    litellm.request_timeout = None
+    # 注意: litellm>=1.96 的 request_timeout_resolver 会执行 float(litellm.request_timeout),
+    # 设为 None 会直接崩溃, 故用一个足够大的秒数表示"永不超时"
+    litellm.request_timeout = 86400
+    litellm.request_timeout_explicitly_set = False
     # litellm 内部重试 (指数退避), 覆盖 429/5xx/连接错误
     # 设为 2: 快速恢复 429 限流 (尊重 Retry-After 头), 不与应用层 5 次重试叠加过多
     litellm.num_retries = 2
@@ -196,17 +199,16 @@ async def chat(
         raise LLMError("litellm 未安装,请先 pip install -r requirements.txt")
     use_prefill = bool(assistant_prefill) and not response_format
     if use_prefill:
-        msgs.append({"role": "assistant", "content": assistant_prefill})
+        messages.append({"role": "assistant", "content": assistant_prefill})
     _client = _get_http_client()
-    kwargs = _build_litellm_kwargs(
-        cfg,
-        messages=msgs,
-        temperature=temperature if temperature is not None else cfg.temperature,
-        max_tokens=max_tokens if max_tokens is not None else cfg.max_tokens,
-        timeout=None,
-    )
-    if _client is not None:
-        kwargs["client"] = _client
+    extra_kwargs = {
+        "messages": messages,
+    }
+    if temperature is not None or cfg.temperature is not None:
+        extra_kwargs["temperature"] = temperature if temperature is not None else cfg.temperature
+    if max_tokens is not None or cfg.max_tokens is not None:
+        extra_kwargs["max_tokens"] = max_tokens if max_tokens is not None else cfg.max_tokens
+    kwargs = _build_litellm_kwargs(cfg, **extra_kwargs)
     if tools:
         kwargs["tools"] = tools
         kwargs["parallel_tool_calls"] = False
@@ -259,10 +261,8 @@ async def stream(
         temperature=temperature if temperature is not None else cfg.temperature,
         max_tokens=eff_max if eff_max is not None else cfg.max_tokens,
         stream=True,
-        timeout=None,
+        timeout=86400,  # 大数值超时, 避免 None 触发 litellm>=1.96 的 float(None) 崩溃
     )
-    if _client is not None:
-        kwargs["client"] = _client
     if stop:
         kwargs["stop"] = stop
     try:

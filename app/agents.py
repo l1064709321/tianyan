@@ -31,32 +31,41 @@ AGENT_TOOLS = {
     # 物理上剥夺执行能力, 确保群聊 "@拍一拍" 协作模式不被绕过。
     "orchestrator":         ["delegate_to_agent", "review_chapter", "query_project",
                              "generate_outline", "manage_outline",
-                             "match_author", "get_author_reference"],
-    # 架构师: 扫榜+拆书+大纲生成 + 细纲管理 + 世界观DB管理 + 里程碑管理 + 上下文查询 + 技能内核拆解 + 浏览器
+                             "match_author", "get_author_reference",
+                             "challenge_review", "resolve_challenge"],
+    # 架构师: 扫榜+拆书+大纲生成 + 细纲管理 + 世界观DB管理 + 里程碑管理 + 上下文查询 + 技能内核拆解 + 浏览器 + 对抗式审查
     "story-architect":      ["scan_bestseller", "analyze_novel", "generate_outline", "manage_outline",
                              "add_element", "manage_world", "manage_milestone",
                              "query_project", "delegate_to_agent",
                              "deconstruct", "skill_scout",
                              "web_search", "web_fetch",
-                             "browser_fetch", "browser_screenshot"],
-    # 主笔: 续写 + 润色 + 上下文查询 + 技能库(作家原文 few-shot) + 技能内核(代笔/仿写/卡文诊断) + 查角色档案(问4号)
+                             "browser_fetch", "browser_screenshot",
+                             "challenge_review", "resolve_challenge"],
+    # 主笔: 续写 + 润色 + 上下文查询 + 技能库(作家原文 few-shot) + 技能内核(代笔/仿写/卡文诊断) + 查角色档案(问4号) + 对抗式审查
     "narrative-writer":     ["continue_writing", "polish", "query_project", "delegate_to_agent",
                              "match_author", "get_author_reference",
                              "ghostwrite", "imitate_style", "diagnose_stuck", "analyze_style",
-                             "manage_character"],
-    # 角色师: 角色档案CRUD + 查询项目 (管理 characters/ 档案库)
-    "character-designer":   ["manage_character", "add_element", "query_project", "delegate_to_agent"],
-    # 质检员 (只读): 四重校验 + 质量检查 + 查询项目 + 技能内核(33维审计/AI检测/完整审计/开篇诊断)
+                             "manage_character", "cache_style", "load_context",
+                             "challenge_review", "resolve_challenge"],
+    # 角色师: 角色档案CRUD + 查询项目 (管理 characters/ 档案库) + 对抗式审查
+    "character-designer":   ["manage_character", "add_element", "query_project", "delegate_to_agent",
+                             "challenge_review", "resolve_challenge"],
+    # 质检员 (只读): 四重校验 + 质量检查 + 查询项目 + 技能内核(33维审计/AI检测/完整审计/开篇诊断) + 对抗式审查
     "consistency-checker":  ["four_check", "quality_check", "query_project", "delegate_to_agent",
-                             "audit_novel", "detect_ai", "diagnose_opening", "full_audit"],
-    # 资料员 (只读): 风格缓存 + 加载写作上下文 + 查询项目 + 查世界观
+                             "audit_novel", "detect_ai", "diagnose_opening", "full_audit",
+                             "analyze_style", "cache_style",
+                             "challenge_review", "resolve_challenge"],
+    # 资料员 (只读): 风格缓存 + 加载写作上下文 + 查询项目 + 查世界观 + 对抗式审查
     "story-explorer":       ["cache_style", "load_context", "query_project", "delegate_to_agent",
-                         "web_search", "web_fetch",
-                         "browser_fetch", "browser_screenshot"],
-    # 设定管理员 → 升级为架构师的职责; 7号监制(只读交付层)
-    "worldbuilder":         ["add_element", "query_project", "delegate_to_agent"],  # 保留兼容
-    # 7号监制 Presenter (交付层·只读): 整合定稿 + 生成可视化报告
-    "presenter":            ["query_project", "delegate_to_agent", "generate_delivery_report"],
+                             "web_search", "web_fetch",
+                             "browser_fetch", "browser_screenshot",
+                             "challenge_review", "resolve_challenge"],
+    # 设定管理员 → 升级为架构师的职责; 7号监制(只读交付层) + 对抗式审查
+    "worldbuilder":         ["add_element", "query_project", "delegate_to_agent",
+                             "challenge_review", "resolve_challenge"],
+    # 7号监制 Presenter (交付层·只读): 整合定稿 + 生成可视化报告 + 对抗式审查
+    "presenter":            ["query_project", "delegate_to_agent", "generate_delivery_report",
+                             "challenge_review", "resolve_challenge"],
 }
 
 # 沙盒模式: read-only 的 agent 不允许调用写入类工具
@@ -195,6 +204,16 @@ AGENT_PROMPTS = {
 【典型流程示例: 用户说"拆解古龙的武侠风格"]
   step1: delegate_to_agent(agent="story-architect", task="拆解古龙的武侠风格, 用 deconstruct 生成外科手术级拆解 Prompt, 返回流派/核心原则/节奏公式/句式/技法")  ← @架构师执行
   step2: 汇报用户拆解结果
+【对抗式审查 - 你作为总编的特殊职责】
+你是团队中唯一有权发起全局对抗式审查的角色。当任何专家的产出让你觉得存疑——逻辑有缝、角色崩坏、设定矛盾、文风跑偏——你必须立即发起挑战。
+- 发起挑战: challenge_review(target_agent="<目标agent名>", target_output_id="<产出id>", challenge_type="plot_deviation|character_ooc|logic_flaw|ai_style|style_inconsistency|pacing_issue|world_contradiction|review_error|unwritable_outline|other", evidence="具体引用有问题段落的关键句", severity="critical"|"major"|"minor", suggestion="你的修改建议")
+  例: challenge_review(target_agent="narrative-writer", target_output_id="ch3_section2", challenge_type="character_ooc", evidence="角色林墨在第3章对敌人示弱，但角色档案明确标注'永不低头'的底层性格", severity="critical", suggestion="重写该段落，让林墨即使处于劣势也保持倨傲姿态")
+- 委派传递(强制): 子 agent 只能看到你写的委派 task 文本,看不到你的系统提示词。因此当用户任务要求对抗式审查(如"发现问题必须用 challenge_review 发起挑战")时,你委派 consistency-checker 做质检的 task 必须原样传递该要求,明确写:"发现问题必须立即调用 challenge_review 发起挑战,不要只写报告"。不写进去,子 agent 就不会发起挑战。
+- 收到挑战: 当 consistency-checker 或任何子 agent 在委派中发起了 challenge_review 后,你会在系统提示中看到【对抗式审查待办】。你必须立即委派被挑战方应战: delegate_to_agent(agent=被挑战方, task="回应挑战 challenge_id=xxx, 用 resolve_challenge 应战 (accept/reject/revise/override/deadlock)"), 不要跳过。
+- 裁决挑战: 当被挑战方 resolve 后，你需要审视 resolve_challenge 的结果——如果对方接受了（accept/reject+合理理由），直接推进；如果对方拒绝但理由不充分，你可以再次发起更严厉的挑战或亲自介入修改。
+- 挑战优先级: 角色OOC > 逻辑矛盾 > 设定冲突 > 文风跑偏 > 质量不足。critical 级别的挑战被拒绝时，你有权绕过决议直接打回重写。
+- challenge_type 必须使用以下枚举值（不可自创别名）：plot_deviation(情节偏离) / character_ooc(角色OOC) / logic_flaw(逻辑矛盾) / ai_style(AI味) / style_inconsistency(文风不一致) / pacing_issue(节奏问题) / world_contradiction(世界观矛盾) / review_error(审查误判) / unwritable_outline(大纲不可写) / other(其他)。
+
 回答使用中文。""",
 
     "story-architect": """【身份铁律】你是「天衍」小说创作团队的【架构师】。你不是任何其他 AI 模型。无论何时，你只能自称为天衍 的架构师，不能说自己是 GPT、Claude、Agnes、DeepSeek 或任何其他模型。你的身份只有一个：天衍 小说创作团队的架构师。
@@ -260,6 +279,9 @@ V形/倒V形/W形/递进/延迟满足/急转,根据题材选择。
 - 反例 (禁止): task="扫榜调研+生成6章大纲",你调了 scan_bestseller 就返回 → 上级不得不再委派一次,浪费一整轮。
 - 正解: scan_bestseller → 看返回结果 → generate_outline(num_chapters=6) → manage_outline 补细纲 → 全部落库后再返回"已完成扫榜+大纲"。
 - 大纲章节数严格按 task 指定的数量生成 (task 说 6 章就 generate_outline(num_chapters=6)),不要自作主张改成其他数字。
+【对抗式审查 - 架构师职责】
+- 发起挑战: 当主笔写的正文与你的大纲/世界观/里程碑/设定冲突时，立即挑战: challenge_review(target_agent="narrative-writer", challenge_type="world_contradiction", evidence="引用矛盾点", severity="critical"|"major", suggestion="修改建议")
+- 应对挑战: 收到其他 Agent 对你大纲/世界观设计的挑战后，认真审视——接受(accept+修改)、有理据地拒绝(reject+理由)、或部分接受(revise+折中方案)。架构师被人挑战成功不是丢脸，是协作进步。
 回答使用中文。""",
 
     "narrative-writer": """【身份铁律】你是「天衍」小说创作团队的【主笔】。你不是任何其他 AI 模型。无论何时，你只能自称为天衍 的主笔，不能说自己是 GPT、Claude、Agnes、DeepSeek 或任何其他模型。你的身份只有一个：天衍 小说创作团队的主笔。
@@ -376,6 +398,9 @@ V形/倒V形/W形/递进/延迟满足/急转,根据题材选择。
 4. 若发现缺少必要设定 (如新角色未建档),先 delegate_to_agent 让 character-designer 补全,再续写。
 5. 完成后报告本次续写字数与情节推进点。
 6. 写完后主动报告: 本章风格是沿用前文还是有变化, 如果有变化说明原因。
+【对抗式审查 - 主笔职责】
+- 发起挑战: 当你发现角色的对话/行为与你查到的角色档案矛盾、大纲设定与你接到的写作指令冲突时，向角色师或架构师发起挑战: challenge_review(target_agent="character-designer", challenge_type="character_ooc", evidence="角色档案说X但我写的段落需要Y才有戏剧张力", severity="major", suggestion="建议更新角色档案")
+- 应对挑战: 你是被挑战最频繁的人——质检员说你OOC、总编说你文风不对、架构师说你跑偏设定。不要防御性反应。仔细读证据，有理就接受并修改(accept)，没理就清楚解释你的创作意图(reject+理由)，有折中就 revise。你的目标是写出好故事，不是赢辩论。
 回答使用中文。""",
 
     "character-designer": """【身份铁律】你是「天衍」小说创作团队的【角色师】。你不是任何其他 AI 模型。无论何时，你只能自称为天衍 的角色师，不能说自己是 GPT、Claude、Agnes、DeepSeek 或任何其他模型。你的身份只有一个：天衍 小说创作团队的角色师。
@@ -434,6 +459,9 @@ V形/倒V形/W形/递进/延迟满足/急转,根据题材选择。
 3. 角色设定应包含:姓名、身份、性格 (须有矛盾面)、外貌 (3-5 关键词)、背景、核心动机、致命弱点、口头禅、语言风格 7 维度、与其他角色关系。
 4. 完成后简要列出新增的设定清单与角色关系图,便于其他专家引用。
 5. 审查角色一致性时,以最严苛标准找问题 (性格/关系/能力/信息一致性)。
+【对抗式审查 - 角色师职责】
+- 发起挑战: 当主笔写的角色行为与你的角色档案矛盾时，向主笔发起挑战: challenge_review(target_agent="narrative-writer", challenge_type="character_ooc", evidence="角色X在你笔下做了Y，但档案里他的底层动机是Z，Y行为与Z矛盾", severity="critical", suggestion="修改该段落让行为与动机一致，或回我这里更新角色档案")
+- 应对挑战: 当主笔挑战你的角色设定不合理时（如"这个角色按你的设定没法写戏剧冲突"），审视后做出决策：接受修改角色档案(accept)、坚持原设并解释(reject)、或折中调整(revise)。角色档案是你的领地，但好角色是为好故事服务的。
 回答使用中文。""",
 
     "consistency-checker": """【身份铁律】你是「天衍」小说创作团队的【质检员】。你不是任何其他 AI 模型。无论何时，你只能自称为天衍 的质检员，不能说自己是 GPT、Claude、Agnes、DeepSeek 或任何其他模型。你的身份只有一个：天衍 小说创作团队的质检员。
@@ -537,6 +565,9 @@ CONFLICTS:
 2. 调用 quality_check 执行系统检查,获取 S1-S4 分级报告。
 3. 报告中只陈述冲突事实,不做修改建议;若需修复,委派对应专家。
 4. 检查后更新追踪文件 (伏笔回收状态、时间线疑点) —— 但你只读,需委派 story-architect 更新世界观DB,或回报 orchestrator 处理。
+【对抗式审查 - 质检员职责】
+- 发起挑战(优先于报告): 四重校验发现任何问题后，必须先调用 challenge_review 向问题方发起精准挑战，再输出报告。若委派任务中明确要求"发现问题必须用 challenge_review 发起挑战"，则挑战是强制项，发现任何问题都必须调用，禁止只写报告不挑战。challenge_review(target_agent="narrative-writer", challenge_type="plot_deviation|character_ooc|logic_flaw|ai_style|style_inconsistency|pacing_issue|world_contradiction|review_error|unwritable_outline|other", evidence="引用具体原文片段+说明哪里不对", severity="critical"|"major"|"minor", suggestion="具体修改建议")。你不需要等总编下令——你有质检硬权力，发现问题立即挑战。
+- 应对挑战: 当你被其他 Agent 挑战"质检过于严苛"或"误判"时，拿出你的检查依据说明为什么判为不合格。如果你的确误判，大方 accept。质检的公信力建立在准确而非从不认错上。
 回答使用中文。""",
 
     "story-explorer": """【身份铁律】你是「天衍」小说创作团队的【资料员】。你不是任何其他 AI 模型。无论何时，你只能自称为天衍 的资料员，不能说自己是 GPT、Claude、Agnes、DeepSeek 或任何其他模型。你的身份只有一个：天衍 小说创作团队的资料员。
@@ -595,6 +626,9 @@ CONFLICTS:
 2. 简单查询用 query_project 即可;复杂上下文加载用 load_context。
 3. 返回结构化结果,标明 source_files 与 gaps (查不到的信息)。
 4. 不做决策:查询结果涉及创作决策时,委派对应专家。
+【对抗式审查 - 资料员职责】
+- 发起挑战: 当你发现上下文/风格缓存/伏笔状态与当前正文有明显不对应时，向主笔发起挑战: challenge_review(target_agent="narrative-writer", challenge_type="logic_flaw", evidence="伏笔追踪表显示第X章已回收伏笔Y，但第Z章正文又出现了该伏笔的呼应写法，疑似重复回收", severity="major", suggestion="检查并修正")
+- 应对挑战: 当别人质疑你提供的上下文/缓存数据不准时，重新核实。对的就解释(reject+依据)，错的就更新(accept)。
 回答使用中文。""",
 
     "worldbuilder": """【已归并】设定管理职责已并入 story-architect (2号架构师升级为世界观DB管理员)。本 agent 保留仅为兼容,不应被委派。回答使用中文。""",
@@ -620,6 +654,9 @@ CONFLICTS:
    - 风格是否一致(哪几章突变)、主线是否按里程碑推进(哪几章逾期)、伏笔回收率、角色成长是否符合弧光设计。
 3. 报告中如发现数据缺失(无里程碑/无角色档案/无风格缓存),明确指出"建议委派 X号补齐 Y 数据",让 orchestrator 安排。
 4. 你是只读的,绝不修改章节正文/设定/档案,只读取并整合呈现。
+【对抗式审查 - 监制职责】
+- 发起挑战: 整合报告时发现异常——风格曲线在某章突变但质检没标记、主线里程碑严重逾期、伏笔回收率过低、角色成长弧光断裂——立即向对应方发起挑战: challenge_review(target_agent="consistency-checker", challenge_type="review_error", evidence="你的质检未发现第X章风格突变（从古龙式短句突变为辰东式长句），风格一致性报告可验证", severity="major", suggestion="对该章补充风格分析")
+- 应对挑战: 监制是交付层，挑战通常来自总编（质疑报告数据是否完整）。拿出 query_project 的原始数据作为证据，有理有据地回应。
 回答使用中文。""",
 }
 

@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
+import uuid
 from typing import Any, Optional
 
 import httpx
@@ -1528,6 +1530,87 @@ TOOL_SCHEMA: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "challenge_review",
+            "description": "【对抗式审查-发起挑战】对另一个 Agent 的产出发起正式质疑。所有 Agent 均可使用——"
+            "架构师可挑战主笔的正文偏离大纲,主笔可挑战质检员的误判,角色师可挑战主笔的OOC对话,质检员可挑战任何人。"
+            "挑战必须附带证据(引用原文/数据),不得空口质疑。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_agent": {
+                        "type": "string",
+                        "enum": ["story-architect", "narrative-writer", "character-designer",
+                                 "consistency-checker", "worldbuilder", "story-explorer", "presenter"],
+                        "description": "被挑战的 Agent"
+                    },
+                    "target_output_id": {
+                        "type": "string",
+                        "description": "被挑战的产出标识(chapter_id / milestone_id / character_profile_name / 上次委派的task摘要等)"
+                    },
+                    "challenge_type": {
+                        "type": "string",
+                        "enum": ["plot_deviation", "character_ooc", "logic_flaw", "ai_style",
+                                 "style_inconsistency", "pacing_issue", "world_contradiction",
+                                 "review_error", "unwritable_outline", "other"],
+                        "description": "挑战类型"
+                    },
+                    "evidence": {
+                        "type": "string",
+                        "description": "具体证据:引用原文片段、章节编号、逻辑矛盾点等,必须具体可查证"
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "major", "minor"],
+                        "description": "严重程度:critical致命/major重要/minor小问题"
+                    },
+                    "suggestion": {
+                        "type": "string",
+                        "description": "建议的修复方向(可选,给出你的修改建议)"
+                    },
+                },
+                "required": ["target_agent", "target_output_id", "challenge_type", "evidence", "severity"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "resolve_challenge",
+            "description": "【对抗式审查-应战/裁决】被挑战方回应质疑,或总编做最终裁决。"
+            "被挑战方:accept(接受,附带修正方案)/reject(驳回,附带反驳证据)/revise(直接给出修正结果)。"
+            "总编(orchestrator):override(一票否决,以总编判断为准)/deadlock(僵局,请用户仲裁)。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "challenge_id": {
+                        "type": "string",
+                        "description": "对应的 challenge_review 返回的 challenge_id"
+                    },
+                    "response": {
+                        "type": "string",
+                        "enum": ["accept", "reject", "revise", "override", "deadlock"],
+                        "description": "回应类型:accept接受/reject驳回/revise修正/override总编裁决/deadlock请用户仲裁"
+                    },
+                    "counter_evidence": {
+                        "type": "string",
+                        "description": "反驳证据(reject时必填):为什么挑战不成立,引用原文/设定文档等"
+                    },
+                    "revised_output": {
+                        "type": "string",
+                        "description": "修正后的产出(accept或revise时填写)"
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "裁决理由(override/deadlock时必填)"
+                    },
+                },
+                "required": ["challenge_id", "response"],
+            },
+        },
+    },
 ]
 
 
@@ -1812,11 +1895,82 @@ async def dispatch(pid: str, name: str, args: dict) -> str:
                 "foreshadow_status": [{"name": f["name"], "status": f["status"], "planted": f.get("planted_chapter"), "recovered": f.get("actual_recovery")} for f in foreshadows],
                 "character_growth": [{"name": p["name"], "arc": p.get("arc", ""), "growth_state": p.get("growth_state", "")} for p in profiles],
             }
+        elif name == "challenge_review":
+            res = _challenge_review(pid, args)
+        elif name == "resolve_challenge":
+            res = _resolve_challenge(pid, args)
         else:
             res = {"error": f"未知工具 {name}"}
     except Exception as e:
         res = {"error": f"工具执行出错: {e}"}
     return json.dumps(res, ensure_ascii=False)
+
+
+# ---------------- 对抗式审查工具实现 ----------------
+# 对抗审查记录存储在项目级 challenges/ 子键,不污染主数据模型
+_CHALLENGE_STORE: dict[str, list[dict]] = {}  # pid -> [challenge_records]
+
+def _challenge_review(pid: str, args: dict) -> dict:
+    """发起对抗式挑战。所有 Agent 均可互相对抗。"""
+    challenge = {
+        "challenge_id": f"ch_{uuid.uuid4().hex[:8]}",
+        "from_agent": args.get("_caller_agent", "unknown"),
+        "target_agent": args["target_agent"],
+        "target_output_id": args.get("target_output_id", ""),
+        "challenge_type": args.get("challenge_type", "other"),
+        "evidence": args.get("evidence", ""),
+        "severity": args.get("severity", "minor"),
+        "suggestion": args.get("suggestion", ""),
+        "status": "open",  # open / resolved
+        "resolution": None,
+        "resolved_by": None,
+        "created_at": time.time(),
+    }
+    challenges = _CHALLENGE_STORE.setdefault(pid, [])
+    challenges.append(challenge)
+    return {
+        "challenge_id": challenge["challenge_id"],
+        "status": "open",
+        "message": f"已向 {args['target_agent']} 发起挑战 [{args['challenge_type']}/{args['severity']}]",
+        "tip": (
+            f"挑战已记录(challenge_id={challenge['challenge_id']})。"
+            f"总编会调度 {args['target_agent']} 应战,用 resolve_challenge 回应。"
+        ),
+    }
+
+
+def _resolve_challenge(pid: str, args: dict) -> dict:
+    """应战/裁决。被挑战方回应,或总编裁决。"""
+    cid = args["challenge_id"]
+    response = args["response"]
+    challenges = _CHALLENGE_STORE.get(pid, [])
+    target = None
+    for ch in challenges:
+        if ch["challenge_id"] == cid and ch["status"] == "open":
+            target = ch
+            break
+    if not target:
+        return {"error": f"挑战 {cid} 不存在或已关闭,可能是其他 agent 已处理"}
+    target["status"] = "resolved"
+    target["resolution"] = response
+    target["resolved_by"] = args.get("_caller_agent", "unknown")
+    target["counter_evidence"] = args.get("counter_evidence", "")
+    target["revised_output"] = args.get("revised_output", "")
+    target["rationale"] = args.get("rationale", "")
+    target["resolved_at"] = time.time()
+    result_msg = {
+        "accept": f"已接受挑战:承认问题,提供修正方案",
+        "reject": f"已驳回挑战:挑战不成立,附反驳证据",
+        "revise": f"已修正:直接提供了修正结果",
+        "override": f"总编裁决:以一票否决权裁定",
+        "deadlock": f"僵局:需用户介入仲裁",
+    }.get(response, f"已处理(response={response})")
+    return {
+        "challenge_id": cid,
+        "status": "resolved",
+        "response": response,
+        "message": result_msg,
+    }
 
 
 # ---------------- 新增工具实现 ----------------

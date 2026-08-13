@@ -388,6 +388,7 @@ def _model_ready(cfg) -> bool:
         "xai": "XAI_API_KEY", "mistral": "MISTRAL_API_KEY",
         "volcengine": "VOLCENGINE_API_KEY", "ark": "ARK_API_KEY",
         "baidu": "ERNIE_API_KEY", "ernie": "ERNIE_API_KEY", "qianfan": "ERNIE_API_KEY",
+        "agnes": "AGNES_API_KEY",
     }
     return bool(os.environ.get(env_map.get(provider, "")))
 

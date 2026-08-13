@@ -104,33 +104,6 @@ def _tool_quality_hint(fname: str, result: str) -> str | None:
     return f"【工具质检】{fname} 返回错误: {err_snippet}。请根据错误信息调整策略,或换用其他工具。"
 
 
-def _project_brief_for_think(pid: str) -> str:
-    """思考阶段用的项目简报 (轻量, 不调 LLM)。"""
-    p = store.get_project(pid) or {}
-    parts = []
-    if p.get("name"): parts.append(f"项目: {p['name']}")
-    if p.get("audience"): parts.append(f"频道: {p['audience']}")
-    if p.get("genre"): parts.append(f"类型: {p['genre']}")
-    if p.get("style"): parts.append(f"文风: {p['style']}")
-    if p.get("premise"): parts.append(f"核心设定: {p['premise'][:200]}")
-    return "\n".join(parts) or "(新项目, 暂无设定)"
-
-
-def _assets_summary_for_think(pid: str) -> str:
-    """思考阶段用的资产概况 (章节/设定/素材数量, 让推演知道数据够不够)。"""
-    chapters = store.list_chapters(pid)
-    elements = store.list_elements(pid)
-    chunks = store.list_chunks(pid)
-    lines = []
-    lines.append(f"章节数: {len(chapters)}" + (f" (已写 {sum(1 for c in chapters if c.get('content'))} 章)" if chapters else ""))
-    if chapters:
-        last = chapters[-1]
-        lines.append(f"最近章节: 《{last.get('title','')}》(idx={last.get('idx',0)}, {'有正文' if last.get('content') else '无正文'})")
-    lines.append(f"设定条目: {len(elements)} (角色/世界观/地点/时间线)")
-    lines.append(f"上传素材分块: {len(chunks)}")
-    return "\n".join(lines)
-
-
 # ===== 改进:LLM 调用重试机制 =====
 # 原版: LLM 调用失败直接报错 → 网络抖动/API 限流就挂
 # 改进: 指数退避重试,临时错误自动恢复
@@ -291,15 +264,11 @@ def _sandbox_validate(pid: str, agent_name: str, tool_name: str, args: dict) -> 
     return passed, issues
 
 
-# ===== 上下文窗口管理 (改进:摘要压缩替代粗暴截断) =====
-# 原版: 超长直接丢弃旧消息 → 丢失重要上下文(角色设定/伏笔/剧情决策)
-# 改进: 超长时把旧消息压缩成摘要,保留关键信息,再拼接最近消息
-# ===== 关键修复: 按 token 估算管理, 留 80% 安全余量 =====
-# 原版 MAX_CONTEXT_CHARS=14000 按字符算, 且无安全余量 → 第 2-3 轮必溢出
-# 修复: 按字符近似 token (1 token ≈ 2-3 中文字符), 阈值降到模型上限的 80%
-MAX_CONTEXT_CHARS = 12000  # 对话历史字符上限 (≈ 5000 token, 留足余量给 system prompt)
-KEEP_LAST_TURNS = 8        # 至少保留最近这么多回合
-MODEL_CONTEXT_LIMIT = 32000  # 大多数模型 32k-128k, 取保守值
+# ===== 上下文窗口管理 (摘要压缩替代粗暴截断) =====
+# 现代模型普遍 128K+ context, 按 64K token 为单位管理, 留 80% 安全余量
+MAX_CONTEXT_CHARS = 64000  # 对话历史字符上限 (≈ 25K token, 64K 窗口留 40% 给 system+工具结果)
+KEEP_LAST_TURNS = 12       # 至少保留最近这么多回合
+MODEL_CONTEXT_LIMIT = 128000  # 现代模型 128K, 取标准值
 SAFE_RATIO = 0.8             # 安全余量: 总 token ≤ 模型上限的 80%
 
 
@@ -510,14 +479,16 @@ def _build_messages(
 
 
 def _extract_usage(resp):
-    """从 litellm completion response 提取 token 使用 + 成本。
+    """从 litellm completion response 提取 token 使用 + 成本 + 缓存命中率。
     litellm 在 resp.usage 给 prompt_tokens/completion_tokens/total_cost (若 _fer.alogo_cost 启用)。
+    DeepSeek 等模型还在 usage 中返回 prompt_cache_hit_tokens / prompt_cache_miss_tokens。
+    返回 (tokens, cost, cache_hit_tokens, cache_miss_tokens)
     """
     if resp is None:
-        return None, None
+        return None, None, None, None
     u = getattr(resp, "usage", None)
     if u is None:
-        return None, None
+        return None, None, None, None
     tok = (getattr(u, "prompt_tokens", 0) or 0) + (getattr(u, "completion_tokens", 0) or 0)
     # litellm 在响应上塞 _response_cost (USD),部分版本在 usage 上
     cost = getattr(resp, "_response_cost", None) or getattr(u, "cost", None) or 0
@@ -525,7 +496,9 @@ def _extract_usage(resp):
         cost = float(cost)
     except Exception:
         cost = 0
-    return tok, cost
+    cache_hit = getattr(u, "prompt_cache_hit_tokens", 0) or 0
+    cache_miss = getattr(u, "prompt_cache_miss_tokens", 0) or 0
+    return tok, cost, cache_hit, cache_miss
 
 
 def _truncate_for_trace(s, n: int = 800) -> str:
@@ -542,60 +515,7 @@ def _truncate_for_trace(s, n: int = 800) -> str:
 
 
 # ---------- 总编验收 (群聊式协作的汇总环节) ----------
-async def self_review(
-    pid: str, user_input: str, delegation_log: list[dict],
-    final_answer: str, model_cfg,
-) -> tuple[bool, str]:
-    """总编对照用户原始需求 + 委派结果 + 最终答案, 显式过一遍。
-
-    返回 (是否通过, 评语)。不通过时评语指出问题, 主流程会打回重做。
-    零成本兜底: LLM 调用失败时默认通过 (不阻塞产出)。
-    """
-    # 委派摘要 (截断, 避免 prompt 过长)
-    dl_summary = []
-    for d in delegation_log:
-        dl_summary.append(
-            f"- @{d['to']}: 任务={_trunc(d['task'], 80)} → 结果={_trunc(d['result'], 200)}"
-        )
-    dl_text = "\n".join(dl_summary) or "(无委派)"
-
-    review_messages = [
-        {
-            "role": "system",
-            "content": (
-                "你是天衍总编, 现在要验收本轮工作。各专家已执行完委派任务, 主笔已产出最终答案。"
-                "请你对照用户原始需求, 逐项检查:\n"
-                "1. 委派的专家是否做对了事? 结果是否达标?\n"
-                "2. 最终答案是否完整回应了用户需求? 有无遗漏/跑偏?\n"
-                "3. 是否有明显的错误/不一致/未完成的环节?\n\n"
-                "输出格式 (必须严格遵守):\n"
-                '<<<REVIEW>>>{"pass": true/false, "verdict": "一句话评语: 通过理由 / 打回原因"}'
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"# 用户原始需求\n{user_input}\n\n"
-                f"# 本轮委派记录\n{dl_text}\n\n"
-                f"# 最终答案\n{_trunc(final_answer, 600)}\n\n"
-                "请验收。"
-            ),
-        },
-    ]
-    try:
-        resp = await _chat_with_retry(review_messages, model_cfg, temperature=0.2, max_tokens=400)
-        text = resp.get("content", "") or ""
-        m = re.search(r"<<<REVIEW>>>\s*(\{.*\})", text, re.S)
-        if m:
-            data = json.loads(m.group(1))
-            return bool(data.get("pass", True)), str(data.get("verdict", ""))
-        # 没解析到 JSON, 看文本里有没有"不通过/打回/问题"
-        if any(kw in text for kw in ("不通过", "打回", "未通过", "有问题", "重做")):
-            return False, text[:150]
-        return True, "验收通过(默认)"
-    except Exception as e:
-        logger.warning(f"总编验收 LLM 调用失败, 默认通过: {e}")
-        return True, "验收跳过(LLM调用失败)"
+# self_review 已移除——质检由 consistency-checker agent 完成, 无需同模型自审
 
 
 # ---------- 工具调用与 trace 落盘 ----------
@@ -680,6 +600,8 @@ async def _exec_tool(
                             input_=_truncate_for_trace(fargs, 800))
     t0 = time.time()
     try:
+        # 注入调用方身份,供对抗式审查工具(challenge_review/resolve_challenge)追溯来源
+        fargs["_caller_agent"] = agent_name
         result = await tools.dispatch(pid, fname, fargs)
     except Exception as e:
         logger.error(f"[{agent_name}] 工具 {fname} 执行异常: {e}", exc_info=True)
@@ -690,6 +612,56 @@ async def _exec_tool(
         store.add_run_event(run_id, "tool_result", agent=agent_name, tool=fname,
                             output=_truncate_for_trace(result, 800), duration_ms=dur_ms)
     return result
+
+
+def _inject_open_challenges(pid: str, messages: list[dict], agent_name: str) -> None:
+    """对抗式审查: 把未裁决挑战注入 LLM 上下文, 引导调度应战 (resolve_challenge)。
+
+    子 agent 调用 challenge_review 后仅把挑战写入 _CHALLENGE_STORE; 若不注入,
+    总编与被挑战方在后续步骤完全感知不到挑战存在, 导致 open 挑战永远无人裁决,
+    对抗式审查闭环断裂。因此在主循环与子 agent 循环每次 LLM 调用前注入。
+    """
+    try:
+        from .tools import _CHALLENGE_STORE
+        open_ch = [c for c in _CHALLENGE_STORE.get(pid, []) if c.get("status") == "open"]
+        if not open_ch:
+            return
+        # 去重: 已注入过提醒的 challenge_id 不再重复追加, 防止上下文膨胀
+        injected = set()
+        for m in messages:
+            if m.get("role") == "system" and "对抗式审查待办" in (m.get("content") or ""):
+                for cid in re.findall(r"challenge_id=([A-Za-z0-9_\-]+)", m["content"]):
+                    injected.add(cid)
+        open_ch = [c for c in open_ch if c.get("challenge_id") not in injected]
+        if not open_ch:
+            return
+        lines = []
+        for c in open_ch:
+            lines.append(
+                f"- challenge_id={c.get('challenge_id')} | from={c.get('from_agent')} | "
+                f"target={c.get('target_agent')} | type={c.get('challenge_type')} | "
+                f"severity={c.get('severity')} | evidence={c.get('evidence') or ''} | "
+                f"suggestion={c.get('suggestion') or ''}"
+            )
+        if agent_name == agents.DEFAULT_AGENT:
+            action = (
+                "立即调度被挑战方应战: delegate_to_agent(agent=目标agent, "
+                "task='回应挑战 challenge_id=xxx, 用 resolve_challenge 应战 "
+                "(response=accept/reject/revise/override/deadlock, 附 counter_evidence/rationale)')。"
+                "收到 resolve 结果后审视理由: 充分则通过, 不充分可再次挑战或亲自介入。"
+            )
+        else:
+            action = (
+                "如果你是被挑战方或被委派应战, 必须用 resolve_challenge 回应: "
+                "challenge_id 见上, response=accept/reject/revise/override/deadlock, "
+                "附 counter_evidence/rationale。"
+            )
+        messages.append({
+            "role": "system",
+            "content": "【对抗式审查待办】以下挑战尚未裁决:\n" + "\n".join(lines) + "\n" + action,
+        })
+    except Exception as e:
+        logger.debug(f"[challenge] 注入失败(非致命): {e}")
 
 
 async def _run_sub_agent(
@@ -726,6 +698,8 @@ async def _run_sub_agent(
     # 群聊式: 通知前端子 agent 开始发言 (前端建独立聊天气泡)
     await emit({"type": "sub_agent_start", "agent": agent_name, "task": task, "depth": depth})
     for step in range(sub_max_steps):
+        # 对抗式审查: 注入未裁决挑战, 让被挑战方/应战方感知到 open challenge
+        _inject_open_challenges(pid, messages, agent_name)
         t0 = time.time()
         try:
             # 默认用非 reasoning 模型 (如 agnes-1.5-flash),4096 够用。
@@ -745,13 +719,15 @@ async def _run_sub_agent(
         reasoning = resp.get("reasoning", "") or ""
         # 思考过程 = reasoning + content (reasoning 是模型内部思考,content 是模型输出)
         thinking = (reasoning + "\n" + content).strip() if reasoning else content
-        # 落盘 LLM 调用事件 (token + 成本,便于回放/统计)
+        # 落盘 LLM 调用事件 (token + 成本 + cache,便于回放/统计)
         if run_id:
-            tok, cost = _extract_usage(resp.get("raw"))
+            tok, cost, cache_hit, cache_miss = _extract_usage(resp.get("raw"))
             store.add_run_event(run_id, "llm_call", agent=agent_name,
                                 input_=_truncate_for_trace(task, 200),
                                 output=_truncate_for_trace(content, 400),
                                 tokens=tok, cost=cost,
+                                cache_hit_tokens=cache_hit,
+                                cache_miss_tokens=cache_miss,
                                 duration_ms=int((time.time()-t0)*1000))
 
         if not tool_calls:
@@ -764,6 +740,15 @@ async def _run_sub_agent(
                 await emit({"type": "sub_answer", "agent": agent_name, "text": content, "depth": depth})
             await emit({"type": "sub_agent_done", "agent": agent_name, "depth": depth})
             return content or ""
+
+        # 实时缓存命中率 → 前端展示
+        if run_id:
+            sub_run_meta = store.get_run(run_id) or {}
+            await emit({"type": "cache_stats", "agent": agent_name,
+                        "hit_tokens": cache_hit or 0, "miss_tokens": cache_miss or 0,
+                        "total_hit": sub_run_meta.get("total_cache_hit_tokens", 0),
+                        "total_miss": sub_run_meta.get("total_cache_miss_tokens", 0),
+                        "total_tokens": sub_run_meta.get("total_tokens", 0)})
 
         # 群聊式: 子 agent 的思考过程 (本轮 LLM 输出) 作为聊天气泡思考区推给前端
         if thinking:
@@ -878,154 +863,10 @@ async def run(
 
     yield _event({"type": "start", "agent": agent_name, "input": user_input, "run_id": run_id})
 
-    # ===== 改进: 独立思考阶段 (ReAct 的 Reasoning 前置显式化, 流式显示) =====
-    # 用户需求: 思考过程要逐字实时显示 (像打字机), 思考完自动折叠
-    #   1. 这事能不能做? 现有数据/设定够不够?
-    #   2. 怎么做? 拆成哪些步骤?
-    #   3. 推演可行 → 进工具循环执行; 不可行 → 直接返回让用户补充/重新思考
-    # 流式: 用 stream() 逐字产出, 前端 think_token 实时渲染; 结束发 think_end 折叠
-    MAX_THINK_ROUNDS = 3
-    can_proceed = True
-    think_reject_reason = ""
-    for think_round in range(MAX_THINK_ROUNDS):
-        think_messages = [
-            {
-                "role": "system",
-                "content": (
-                    f"你是天衍「{agent_name}」, 现在收到用户的一个想法/任务。"
-                    "在执行任何工具前, 你必须先在脑海里推演这件事的可行性。\n\n"
-                    "推演要点:\n"
-                    "1. 这件事能不能做? 是否在 Agent 能力范围内?\n"
-                    "2. 现有数据够不够? (项目设定/已有章节/上传素材/联网能力)\n"
-                    "3. 如果能做, 拆成哪些步骤? 每步用什么工具?\n"
-                    "4. 如果不能做或数据不足, 明确指出缺什么, 需要用户补充什么。\n\n"
-                    "【Skill 优先】你有专业写作技能内核 (111位白金作家拆解DB), 推演步骤时优先用 skill 工具:\n"
-                    "  拆书→deconstruct / 审计→full_audit,audit_novel / 开篇诊断→diagnose_opening /\n"
-                    "  仿写→imitate_style / 卡文→diagnose_stuck / 代笔→ghostwrite / AI味→detect_ai\n"
-                    "  不要全用普通工具, 能用 skill 内核的优先用 skill。\n\n"
-                    "特殊情况: 如果用户只是打招呼(如「你好」「在吗」)或闲聊, 这不是创作任务, "
-                    "推演后判定 feasible=true 并在 reason 里写「闲聊/问候」, plan 留空即可, "
-                    "后续直接友好回应即可, 不需要调用任何工具。\n\n"
-                    "输出格式 (必须严格遵守):\n"
-                    "先写推演过程 (打草稿, 算步骤, 评估数据, 100-300字, 像自言自语),\n"
-                    "然后最后一行必须是 JSON 判断, 格式:\n"
-                    '<<<JUDGE>>>{"feasible": true/false, "reason": "一句话理由", "missing": "缺什么(可空)", "plan": ["步骤1","步骤2"]}'
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"# 用户想法/任务\n{user_input}\n\n"
-                    f"# 当前项目上下文\n{_project_brief_for_think(pid)}\n\n"
-                    f"# 已有章节/设定概况\n{_assets_summary_for_think(pid)}\n\n"
-                    + (f"# 规则层提示\n系统检测到信息可能不足: {clarify_q}\n请在推演时重点评估是否确实如此。\n\n" if clarify_q else "")
-                    + "请在脑海里推演这件事的可行性, 推演过程要详细, 最后用 <<<JUDGE>>>JSON 给出判断。"
-                    + (f"\n\n# 上一轮推演被判定不可行, 原因: {think_reject_reason}\n请重新思考如何调整。" if think_reject_reason else "")
-                ),
-            },
-        ]
+    # 思考阶段已移除——_check_clarification_needed 在进入循环前已做轻量校验,
+    # 进入循环后由 LLM 直接工具执行, 无需额外的前瞻性推演 LLM 调用。
 
-        # 通知前端: 开始一个思考块 (默认展开, 接收 think_token)
-        yield _event({
-            "type": "think_start", "agent": agent_name, "round": think_round + 1,
-        })
-
-        # 流式逐字产出思考过程
-        think_buf = ""
-        try:
-            # 超时保护: stream() 可能因网络/API 限流挂起不返回,
-            # 限时 60s, 超时则走 fallback (feasible=True),
-            # 避免前端 SSE 长时间无事件被浏览器断开 → "连接失败"
-            _think_t0 = time.time()
-            _THINK_TIMEOUT = 60.0
-            async for tok in stream(
-                think_messages, s.default_model,
-                temperature=0.5,
-                max_tokens=1500,
-            ):
-                think_buf += tok
-                # 实时把 token 发给前端 (打字机效果)
-                yield _event({"type": "think_token", "agent": agent_name,
-                              "round": think_round + 1, "text": tok})
-                # 超时强制中断 (保护前端不报连接失败)
-                if time.time() - _think_t0 > _THINK_TIMEOUT:
-                    logger.warning(f"[{agent_name}] 思考阶段流式超时 ({_THINK_TIMEOUT}s), 中断走 fallback")
-                    think_buf = think_buf or "思考超时, 跳过推演直接尝试执行。"
-                    break
-        except Exception as e:
-            logger.warning(f"[{agent_name}] 思考阶段流式失败: {e}")
-            think_buf = ""
-
-        # 解析 JSON 判断 (从 <<<JUDGE>>> 后取)
-        think_data = {"feasible": True, "thinking": think_buf, "reason": "fallback"}
-        m = re.search(r"<<<JUDGE>>>\s*(\{.*\})", think_buf, re.S)
-        if m:
-            try:
-                think_data = json.loads(m.group(1))
-                think_data["thinking"] = think_buf[:m.start()].strip()  # 推演过程 = JSON 之前的文本
-            except Exception:
-                pass
-        else:
-            # 没找到 JUDGE 标记, 尝试从全文找 JSON
-            m2 = re.search(r"\{.*\}", think_buf, re.S)
-            if m2:
-                try:
-                    think_data = json.loads(m2.group(0))
-                    think_data["thinking"] = think_buf
-                except Exception:
-                    pass
-
-        thinking_text = think_data.get("thinking", "") or think_buf
-        feasible = think_data.get("feasible", True)
-        reason = think_data.get("reason", "")
-        missing = think_data.get("missing", "")
-        plan = think_data.get("plan", [])
-
-        # 通知前端: 思考结束, 给出判断结果 + 自动折叠
-        yield _event({
-            "type": "think_end", "agent": agent_name, "round": think_round + 1,
-            "feasible": feasible, "reason": reason, "missing": missing, "plan": plan,
-        })
-        store.add_run_event(run_id, "think", agent=agent_name,
-                            output={"thinking": thinking_text, "feasible": feasible, "reason": reason})
-        logger.info(f"[{agent_name}] 思考轮{think_round+1}: feasible={feasible} reason={_trunc(reason, 80)}")
-
-        if feasible:
-            can_proceed = True
-            messages.append({
-                "role": "system",
-                "content": (
-                    f"【推演结论】已确认任务可行。理由: {reason}。"
-                    f"执行计划: {' → '.join(plan) if plan else '(按需调用工具)'}。"
-                    "请按计划执行, 每步调用合适工具。"
-                ),
-            })
-            break
-        else:
-            can_proceed = False
-            think_reject_reason = f"{reason}" + (f" (缺: {missing})" if missing else "")
-            if think_round == MAX_THINK_ROUNDS - 1:
-                reject_msg = (
-                    f"我在脑海里推演了 {MAX_THINK_ROUNDS} 轮, 觉得这件事目前做不了:\n\n"
-                    f"**不可行原因**: {reason}\n"
-                    + (f"**缺少**: {missing}\n" if missing else "")
-                    + f"\n推演过程:\n{thinking_text}\n\n"
-                    "请补充上述信息, 或调整需求后我再重新推演。"
-                )
-                store.add_message(pid, "assistant", reject_msg)
-                store.add_run_event(run_id, "reject", agent=agent_name, output=reject_msg)
-                store.finish_run(run_id, status="rejected")
-                yield _event({"type": "answer_start", "agent": agent_name})
-                for i in range(0, len(reject_msg), 12):
-                    yield _event({"type": "token", "text": reject_msg[i: i + 12]})
-                yield _event({"type": "answer_end"})
-                yield _event({"type": "done", "agent": agent_name, "steps": 0,
-                              "rejected": True, "run_id": run_id, "reason": reason})
-                return
-
-    # 推演通过, 进入工具循环执行
-
-    # 委派历史: 记录本轮发生过的委派 (用于产出前总编验收)
+    # 委派历史: 记录本轮发生过的委派
     delegation_log: list[dict] = []
 
     # 工具调用循环检测: 记录 (tool_name, args_hash) → 连续调用次数
@@ -1033,6 +874,9 @@ async def run(
     _tool_call_counter: dict[tuple, int] = {}
 
     for step in range(s.max_steps):
+        # 对抗式审查: 注入未裁决挑战, 让总编感知到 open challenge 并调度应战
+        _inject_open_challenges(pid, messages, agent_name)
+
         # 先把子 agent 委派过程中累积的事件吐出去
         while event_queue:
             yield event_queue.pop(0)
@@ -1076,12 +920,14 @@ async def run(
         content = resp["content"]
         reasoning = resp.get("reasoning", "") or ""
         thinking = (reasoning + "\n" + content).strip() if reasoning else content
-        # 落盘 LLM 调用事件 (token + 成本)
-        tok, cost = _extract_usage(resp.get("raw"))
+        # 落盘 LLM 调用事件 (token + 成本 + cache)
+        tok, cost, cache_hit, cache_miss = _extract_usage(resp.get("raw"))
         store.add_run_event(run_id, "llm_call", agent=agent_name,
                             input_=_truncate_for_trace(user_input, 200),
                             output=_truncate_for_trace(content, 400),
                             tokens=tok, cost=cost,
+                            cache_hit_tokens=cache_hit,
+                            cache_miss_tokens=cache_miss,
                             duration_ms=int((time.time()-t0)*1000))
 
         # ===== 风险防护: 单次 run 累计超限就终止 =====
@@ -1112,36 +958,27 @@ async def run(
             yield _event({"type": "error", "message": msg, "run_id": run_id})
             return
 
+        # 实时缓存命中率 → 前端展示
+        run_meta = store.get_run(run_id) or {}
+        yield _event({"type": "cache_stats", "agent": agent_name,
+                      "hit_tokens": cache_hit or 0, "miss_tokens": cache_miss or 0,
+                      "total_hit": run_meta.get("total_cache_hit_tokens", 0),
+                      "total_miss": run_meta.get("total_cache_miss_tokens", 0),
+                      "total_tokens": run_meta.get("total_tokens", 0)})
+
+        # 总编思考过程 → 前端渲染 (替代已移除的 _think_phase)
+        if thinking:
+            yield _event({"type": "think_start", "round": step + 1})
+            chunk_size = 8
+            for i in range(0, len(thinking), chunk_size):
+                yield _event({"type": "think_token", "text": thinking[i:i + chunk_size]})
+            yield _event({"type": "think_end", "feasible": True, "reason": ""})
+
         if not tool_calls:
             logger.info(f"[{agent_name}] step={step} 完成 回答长度={len(content or '')}")
 
-            # ===== 群聊式协作: 总编验收环节 =====
-            # 主 agent 委派过专家后, 产出最终答案前, 总编对照用户原始需求 + 委派结果
-            # 显式过一遍: 是否符合设想? 没问题产出; 有问题打回重做。
-            # 闲聊/无委派场景跳过验收。
-            if delegation_log:
-                review_pass, review_verdict = await self_review(
-                    pid, user_input, delegation_log, content, s.default_model,
-                )
-                # 通知前端: 总编验收 (符合/打回 + 评语)
-                yield _event({
-                    "type": "review", "agent": agent_name,
-                    "pass": review_pass, "verdict": review_verdict,
-                    "delegations": delegation_log,
-                })
-                logger.info(f"[{agent_name}] 总编验收: pass={review_pass} verdict={_trunc(review_verdict, 100)}")
-                store.add_run_event(run_id, "review", agent=agent_name,
-                                    output={"pass": review_pass, "verdict": review_verdict})
-                if not review_pass:
-                    # 验收不通过: 打回, 让 LLM 根据验收意见重新执行 (追加 system 提示, 不直接结束)
-                    messages.append({
-                        "role": "system",
-                        "content": (
-                            f"【总编验收未通过】{review_verdict}\n"
-                            "请根据上述验收意见调整, 重新委派或调用工具, 确保产出符合用户需求。"
-                        ),
-                    })
-                    continue  # 回到工具循环, 让 LLM 重新执行
+            # 总编验收已移除——质检由 consistency-checker agent 在委派时完成,
+            # 无需在产出后再用同模型自审。
 
             store.add_message(pid, "assistant", content)
             store.add_run_event(run_id, "end", agent=agent_name,
@@ -1157,7 +994,6 @@ async def run(
             yield _event({
                 "type": "done", "agent": agent_name,
                 "steps": step + 1, "stats": stats, "run_id": run_id,
-                "reviewed": bool(delegation_log),
             })
             logger.info(f"========== 主 agent 完成 steps={step+1} run_id={run_id} ==========")
             # 改进: 异步提取关键信息写入长期记忆 (不阻塞响应)

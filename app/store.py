@@ -142,6 +142,8 @@ def init_db() -> None:
                 total_tokens INTEGER DEFAULT 0,  -- 累计 token (prompt+completion)
                 total_cost REAL DEFAULT 0,        -- 累计成本 (USD, 按 litellm pricing)
                 total_steps INTEGER DEFAULT 0,   -- agent loop 迭代次数
+                total_cache_hit_tokens INTEGER DEFAULT 0,  -- 累计缓存命中 token
+                total_cache_miss_tokens INTEGER DEFAULT 0, -- 累计缓存未命中 token
                 error TEXT,                       -- 失败时记录错误消息
                 started_at REAL NOT NULL,
                 ended_at REAL,
@@ -160,6 +162,8 @@ def init_db() -> None:
                 output TEXT,                      -- JSON 字符串: 输出结果 / LLM 回复
                 tokens INTEGER,                   -- 该事件 token 数 (LLM 时填)
                 cost REAL,                        -- 该事件成本 (LLM 时填)
+                cache_hit_tokens INTEGER,         -- 缓存命中 token 数 (LLM 调用时填)
+                cache_miss_tokens INTEGER,        -- 缓存未命中 token 数 (LLM 调用时填)
                 duration_ms INTEGER,              -- 耗时 (毫秒)
                 error TEXT,                       -- 错误信息 (type=error 时填)
                 FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
@@ -236,6 +240,7 @@ def init_db() -> None:
     # 让前端能识别"上次没跑完",而不是永远显示"运行中"
     recover_interrupted()
     _migrate_add_audience()
+    _migrate_add_cache_columns()
 
 
 def recover_interrupted() -> dict:
@@ -272,6 +277,23 @@ def _migrate_add_audience() -> None:
         cols = [r[1] for r in c.execute("PRAGMA table_info(projects)").fetchall()]
         if "audience" not in cols:
             c.execute("ALTER TABLE projects ADD COLUMN audience TEXT DEFAULT ''")
+
+
+def _migrate_add_cache_columns() -> None:
+    """旧库迁移: runs / run_events 加 cache 命中统计列。"""
+    with get_conn() as c:
+        # runs 表
+        run_cols = [r[1] for r in c.execute("PRAGMA table_info(runs)").fetchall()]
+        if "total_cache_hit_tokens" not in run_cols:
+            c.execute("ALTER TABLE runs ADD COLUMN total_cache_hit_tokens INTEGER DEFAULT 0")
+        if "total_cache_miss_tokens" not in run_cols:
+            c.execute("ALTER TABLE runs ADD COLUMN total_cache_miss_tokens INTEGER DEFAULT 0")
+        # run_events 表
+        evt_cols = [r[1] for r in c.execute("PRAGMA table_info(run_events)").fetchall()]
+        if "cache_hit_tokens" not in evt_cols:
+            c.execute("ALTER TABLE run_events ADD COLUMN cache_hit_tokens INTEGER")
+        if "cache_miss_tokens" not in evt_cols:
+            c.execute("ALTER TABLE run_events ADD COLUMN cache_miss_tokens INTEGER")
 
 
 def _uuid() -> str:
@@ -659,6 +681,8 @@ def add_run_event(
     output: Optional[dict | str] = None,
     tokens: Optional[int] = None,
     cost: Optional[float] = None,
+    cache_hit_tokens: Optional[int] = None,
+    cache_miss_tokens: Optional[int] = None,
     duration_ms: Optional[int] = None,
     error: Optional[str] = None,
 ) -> int:
@@ -679,16 +703,20 @@ def add_run_event(
         seq = row["n"]
         eid = _uuid()
         c.execute(
-            "INSERT INTO run_events(id,run_id,seq,ts,type,agent,tool,input,output,tokens,cost,duration_ms,error)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO run_events(id,run_id,seq,ts,type,agent,tool,input,output,tokens,cost,cache_hit_tokens,cache_miss_tokens,duration_ms,error)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (eid, run_id, seq, _now(), type_, agent, tool,
-             _ser(input_), _ser(output), tokens, cost, duration_ms, error),
+             _ser(input_), _ser(output), tokens, cost, cache_hit_tokens, cache_miss_tokens, duration_ms, error),
         )
         # 增量更新 runs 累计字段 (避免回放时重算)
         if tokens:
             c.execute("UPDATE runs SET total_tokens=total_tokens+? WHERE id=?", (tokens, run_id))
         if cost:
             c.execute("UPDATE runs SET total_cost=total_cost+? WHERE id=?", (cost, run_id))
+        if cache_hit_tokens:
+            c.execute("UPDATE runs SET total_cache_hit_tokens=total_cache_hit_tokens+? WHERE id=?", (cache_hit_tokens, run_id))
+        if cache_miss_tokens:
+            c.execute("UPDATE runs SET total_cache_miss_tokens=total_cache_miss_tokens+? WHERE id=?", (cache_miss_tokens, run_id))
         if type_ == "llm_call":
             c.execute("UPDATE runs SET total_steps=total_steps+1 WHERE id=?", (run_id,))
     return seq
@@ -734,6 +762,8 @@ def aggregate_project_metrics(project_id: str) -> dict:
         r = c.execute(
             "SELECT COUNT(*) n, COALESCE(SUM(total_tokens),0) tok, "
             "COALESCE(SUM(total_cost),0) cost, "
+            "COALESCE(SUM(total_cache_hit_tokens),0) cache_hit, "
+            "COALESCE(SUM(total_cache_miss_tokens),0) cache_miss, "
             "COALESCE(AVG(ended_at-started_at),0) avg_dur "
             "FROM runs WHERE project_id=? AND ended_at IS NOT NULL",
             (project_id,),
@@ -748,6 +778,8 @@ def aggregate_project_metrics(project_id: str) -> dict:
             "total_cost_usd": round(r["cost"], 4),
             "avg_run_duration_sec": round(r["avg_dur"], 2),
             "total_tool_calls": tool_n["n"],
+            "total_cache_hit_tokens": int(r["cache_hit"] or 0),
+            "total_cache_miss_tokens": int(r["cache_miss"] or 0),
         }
 
 

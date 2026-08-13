@@ -523,6 +523,11 @@ PROVIDER_PRESETS = [
         "openai/deepseek-v4-flash",
         "openai/deepseek-v3.2",
     ], "env": "MAAS_API_KEY", "api_base": "https://api.modelarts-maas.com/v2"},
+    # ---------- Agnes AI (https://apihub.agnes-ai.com) ----------
+    # agnes/ 前缀, OpenAI 兼容协议; env: AGNES_API_KEY
+    {"provider": "agnes", "label": "Agnes AI", "models": [
+        "agnes/agnes-2.5-flash",
+    ], "env": "AGNES_API_KEY", "api_base": "https://api.agnes-ai.cn/v1"},
 ]
 
 

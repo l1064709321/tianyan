@@ -939,20 +939,19 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 @keyframes retryPulse{0%,100%{opacity:.5}50%{opacity:1}}
 
 /* === 群聊式: 专家 agent 独立气泡 (思考在气泡外) === */
-.msg.sub-agent{align-items:flex-start;margin:8px 0;animation:subAgentIn .3s ease-out}
+.sub-agent-wrapper{animation:subAgentIn .3s ease-out;margin:8px 0}
+.msg.sub-agent{align-items:flex-start;margin:0;animation:none}
 @keyframes subAgentIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.msg.sub-agent .sub-header{display:flex;align-items:center;gap:8px;margin-bottom:0;padding:0 4px}
-.msg.sub-agent .sub-role{font-size:clamp(10px,1.2vw,11px);font-weight:600;color:var(--muted);
-  font-family:var(--sans);letter-spacing:.4px;flex:0 0 auto}
-.msg.sub-agent .sub-think-toggle{display:inline-flex;align-items:center;gap:4px;
+/* 思考折叠按钮 (气泡外, wrapper 下) */
+.sub-think-toggle{display:inline-flex;align-items:center;gap:4px;
   cursor:pointer;font-size:clamp(10px,1.1vw,11px);font-family:var(--sans);color:var(--muted);
-  transition:.15s;white-space:nowrap;padding:0;flex:0 0 auto}
-.msg.sub-agent .sub-think-toggle:hover{color:var(--ink2)}
-.msg.sub-agent .sub-think-toggle .arrow{font-size:9px;transition:transform .2s}
-.msg.sub-agent .sub-think-toggle.expanded .arrow{transform:rotate(180deg)}
+  transition:.15s;white-space:nowrap;padding:0 4px;margin-bottom:2px}
+.sub-think-toggle:hover{color:var(--ink2)}
+.sub-think-toggle .arrow{font-size:9px;transition:transform .2s}
+.sub-think-toggle.expanded .arrow{transform:rotate(180deg)}
 .msg.sub-agent .sub-bubble{background:var(--paper2);border:1px solid var(--border);
   border-radius:var(--radius-lg);padding:0 clamp(10px,1.5vw,16px) 6px;
-  max-width:100%;min-width:0;
+  max-width:100%;min-width:0;position:relative;
   font-family:var(--serif);font-size:clamp(13px,1.6vw,15.5px);
   line-height:1.4;color:var(--ink2);
   user-select:text;-webkit-user-select:text;word-break:break-word;
@@ -992,6 +991,11 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .st-entry.st-tool .st-tool-tag{color:var(--yellow)}
 .st-entry.st-done .st-tool-tag{background:rgba(90,107,63,.08);border-color:rgba(90,107,63,.28);color:var(--green)}
 .st-entry.st-done .st-tool-tag .st-tool-status{opacity:.9}
+.st-cache-entry{display:flex;align-items:flex-start;gap:6px;padding:1px 0;
+  border-left:2px solid rgba(16,185,129,.35);margin-left:4px;padding-left:4px}
+.st-cache-entry .st-dot{background:#10b981;margin-top:4px}
+.st-cache-entry .st-text{font-size:clamp(9px,1vw,10px);color:var(--muted)}
+.st-cache-entry .st-text b{color:#10b981;font-weight:500}
 /* 总编气泡内的思考折叠 (与子 agent 共用 .sub-think-toggle/.sub-think-panel) */
 .msg.assistant .sub-think-toggle{display:inline-flex;align-items:center;gap:4px;
   cursor:pointer;font-size:clamp(10px,1.1vw,11px);font-family:var(--sans);color:var(--muted);
@@ -1019,7 +1023,7 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .sub-answer-body ul,.sub-answer-body ol{margin:4px 0 4px 20px}
 .sub-answer-body li{margin:2px 0}
 /* 完成态 */
-.msg.sub-agent.sub-done .sub-role::after{content:" ✓";color:var(--green);font-size:11px}
+.msg.sub-agent.sub-done .bubble::after{content:" ✓";color:var(--green);font-size:11px;position:absolute;top:4px;right:8px}
 .sub-truncated{margin-top:8px;font-size:11px;color:var(--yellow);
   font-style:italic;padding:4px 8px;background:rgba(154,107,31,.08);
   border-radius:var(--radius-sm);border:1px solid rgba(154,107,31,.15)}

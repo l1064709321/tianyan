@@ -99,6 +99,17 @@ def _check_api_key():
         print("=" * 60 + "\n")
 
 
+def _find_free_port(start: int = 8000, end: int = 9000) -> int:
+    """在 [start, end] 范围内找到第一个空闲端口。"""
+    import socket
+    for p in range(start, end + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if s.connect_ex(("127.0.0.1", p)) != 0:
+                return p
+    raise RuntimeError(f"未找到空闲端口 ({start}-{end})")
+
+
 def main():
     """启动 uvicorn 服务."""
     _load_env()
@@ -111,7 +122,8 @@ def main():
     import uvicorn
 
     host = os.environ.get("SERVER_HOST", "0.0.0.0")
-    port = int(os.environ.get("SERVER_PORT", "8000"))
+    env_port = os.environ.get("SERVER_PORT")
+    port = int(env_port) if env_port else _find_free_port()
 
     print(f"[tianyan] 天衍启动中... http://{host}:{port}/")
     uvicorn.run(

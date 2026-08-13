@@ -930,8 +930,11 @@ function appendThink() { /* no-op: 全局日志已废除, 思考只挂在归属�
 // 规则3: 双层折叠 toggle —— 点击 "思考过程 ▼" 滑出/收起当前气泡的思考面板
 function toggleSubThink(btn) {
   btn.classList.toggle("expanded");
-  const panel = btn.closest(".msg")?.querySelector(".sub-think-panel");
-  if (panel) panel.classList.toggle("open");
+  // 思考面板现在在 toggle 的兄弟节点,不在 msg 内
+  let panel = btn.nextElementSibling;
+  if (panel && panel.classList.contains("sub-think-panel")) {
+    panel.classList.toggle("open");
+  }
 }
 // 总编气泡的思考过程切换 (inline toggle)
 function toggleOrchThink(btn) {
@@ -1036,28 +1039,44 @@ function ensureOrchestratorThinkPanel(assistant) {
 }
 
 // 抽出: 创建子 agent 气泡 (sub_agent_start 与 step 兜底共用)
+// 思考折叠按钮+面板在气泡外面, 用 wrapper 包在一起
 function createSubAgentBubble(assistant, ag, task) {
   const agLbl = AGENT_LABELS[ag] || ag;
   const agIcon = AGENT_ICONS[ag] || "👤";
+
+  // 外层包装器 (toggle + 面板 + msg 卡片)
+  const wrapper = document.createElement("div");
+  wrapper.className = `sub-agent-wrapper agent-${ag}`;
+
+  // 思考折叠按钮 (气泡外, wrapper 的第一个子元素)
+  const toggle = document.createElement("div");
+  toggle.className = "sub-think-toggle";
+  toggle.onclick = () => toggleSubThink(toggle);
+  toggle.innerHTML = `${agIcon} ${esc(agLbl)} 的思考过程 <span class="arrow">▼</span>`;
+
+  // 思考面板 (气泡外, toggle 后)
+  const panel = document.createElement("div");
+  panel.className = "sub-think-panel";
+  panel.innerHTML = '<div class="sub-think-body"></div>';
+
+  // 子 Agent 消息卡片 (只含气泡)
   const subDiv = document.createElement("div");
   subDiv.className = `msg sub-agent agent-${ag}`;
   subDiv.dataset.agent = ag;
-  subDiv.innerHTML = `<div class="sub-header">
-      <div class="sub-role">${agIcon} ${esc(agLbl)}</div>
-      <div class="sub-think-toggle" onclick="toggleSubThink(this)">
-        思考过程 <span class="arrow">▼</span>
-      </div>
-    </div>
-    <div class="sub-think-panel"><div class="sub-think-body"></div></div>
-    <div class="bubble sub-bubble">
+  subDiv.innerHTML = `<div class="bubble sub-bubble">
       ${task ? `<div class="sub-task"><div class="sub-task-label">📦 接到任务</div>${esc(task.slice(0, 300))}${task.length > 300 ? "…" : ""}</div>` : ""}
       <div class="sub-answer-wrap"></div>
     </div>`;
-  $("#chat").appendChild(subDiv);
+
+  wrapper.appendChild(toggle);
+  wrapper.appendChild(panel);
+  wrapper.appendChild(subDiv);
+  $("#chat").appendChild(wrapper);
+
   if (!assistant.subBubbles) assistant.subBubbles = {};
   assistant.subBubbles[ag] = {
     el: subDiv,
-    thinkBody: subDiv.querySelector(".sub-think-body"),
+    thinkBody: panel.querySelector(".sub-think-body"),
     answerWrap: subDiv.querySelector(".sub-answer-wrap"),
   };
   scrollChat();
@@ -1145,6 +1164,10 @@ function handleEvent(evt, assistant) {
       assistant.thinkBuf = "";
       assistant.curThinkEntry = null;
       assistant.curThinkText = null;
+      break;
+    }
+    case "cache_stats": {
+      updateCacheStats(evt);
       break;
     }
     case "delegate": {
@@ -2653,6 +2676,39 @@ function _fmtCost(c) {
   if (c < 0.01) return `$${c.toFixed(4)}`;
   return `$${c.toFixed(2)}`;
 }
+
+// 实时缓存命中率展示: 在各 Agent 气泡的思考面板内追加缓存统计条目
+function updateCacheStats(evt) {
+  const { agent, hit_tokens, miss_tokens, total_hit, total_miss } = evt;
+  const allCache = (total_hit || 0) + (total_miss || 0);
+  const rate = allCache > 0 ? ((total_hit / allCache) * 100).toFixed(1) : null;
+
+  // 找到对应 Agent 的 think panel
+  let panel = null;
+  if (agent === "orchestrator" || agent === currentAssistant) {
+    panel = assistant?.thinkPanel;
+  } else {
+    const sub = assistant?.subBubbles?.[agent];
+    if (sub) {
+      // subBubbles[ag] = { wrapper, body, thinkPanel, thinkBody, ... }
+      panel = sub.thinkPanel;
+    }
+  }
+
+  if (panel) {
+    // 添加缓存统计条目 (带绿色缓存标记)
+    if (hit_tokens > 0 || miss_tokens > 0) {
+      const stepRate = (hit_tokens + miss_tokens) > 0
+        ? ((hit_tokens / (hit_tokens + miss_tokens)) * 100).toFixed(1) : "0.0";
+      const div = document.createElement("div");
+      div.className = "st-cache-entry";
+      div.innerHTML = `<span class="st-dot" style="background:#10b981"></span>
+        <span class="st-text">缓存命中 <b>${stepRate}%</b> (${_fmtTokens(hit_tokens)}/${_fmtTokens(hit_tokens+miss_tokens)}) · 累计命中率 <b>${rate || "0.0"}%</b></span>`;
+      panel.querySelector(".sub-think-body")?.appendChild(div);
+    }
+  }
+}
+
 // SSE 事件类型 → 中文标签 + 颜色
 const EVENT_META = {
   start:         { label: "开始",     color: "var(--blue)" },
@@ -2684,9 +2740,12 @@ async function openRunsPanel() {
 }
 
 function renderProjectMetrics(m) {
+  const cacheAll = (m.total_cache_hit_tokens || 0) + (m.total_cache_miss_tokens || 0);
+  const cacheRate = cacheAll > 0 ? `${((m.total_cache_hit_tokens / cacheAll) * 100).toFixed(1)}%` : "N/A";
   const html = `
     <div class="rp-metric"><div class="rp-metric-num">${m.total_runs}</div><div class="rp-metric-lbl">总运行</div></div>
     <div class="rp-metric"><div class="rp-metric-num">${_fmtTokens(m.total_tokens)}</div><div class="rp-metric-lbl">tokens</div></div>
+    <div class="rp-metric"><div class="rp-metric-num">${cacheRate}</div><div class="rp-metric-lbl">缓存命中率</div></div>
     <div class="rp-metric"><div class="rp-metric-num">${_fmtCost(m.total_cost_usd)}</div><div class="rp-metric-lbl">成本</div></div>
     <div class="rp-metric"><div class="rp-metric-num">${_fmtDuration(m.avg_run_duration_sec)}</div><div class="rp-metric-lbl">平均耗时</div></div>
     <div class="rp-metric"><div class="rp-metric-num">${m.total_tool_calls}</div><div class="rp-metric-lbl">工具调用</div></div>

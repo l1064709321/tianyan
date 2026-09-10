@@ -31,7 +31,7 @@
   --font-scale:1;
   --base-font:14px;
   --chat-msg-font:13.5px;
-  --chat-line:1.5;
+  --chat-line:1.15;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -142,7 +142,7 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
   border:1px solid var(--border2);border-left:3px solid var(--accent2);
   color:var(--ink);padding:11px 16px;border-radius:12px 12px 4px 12px;max-width:78%;
   font-family:var(--sans);font-size:calc(var(--chat-msg-font) * 0.92);line-height:var(--chat-line)}
-.msg.assistant .bubble{background:var(--paper2);border:1px solid var(--border);
+.msg.assistant .bubble{background:var(--paper2);border:1px solid var(--border);padding-top:2px;padding-bottom:2px;
   border-radius:var(--radius-lg);padding:10px 14px;max-width:100%;width:100%;
   font-family:var(--serif);font-size:var(--chat-msg-font);line-height:var(--chat-line)}
 .bubble{white-space:pre-wrap;word-break:break-word}
@@ -315,7 +315,7 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 
 /* ============ 回答正文区域 ============ */
 .answer-body{margin-top:10px;padding:0 2px}
-.answer-body p{margin:0 0 12px}
+.answer-body p{margin:0 0 3px}
 .caret{display:inline-block;width:7px;height:16px;background:var(--accent);margin-left:2px;
   animation:blink 1s infinite;vertical-align:middle}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
@@ -953,7 +953,7 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .sub-think-toggle:hover{color:var(--ink2)}
 .sub-think-toggle .arrow{font-size:9px;transition:transform .2s}
 .sub-think-toggle.expanded .arrow{transform:rotate(180deg)}
-.msg.sub-agent .sub-bubble{background:var(--paper2);border:1px solid var(--border);
+.msg.sub-agent .sub-bubble{background:var(--paper2);border:1px solid var(--border);padding:4px 8px;
   border-radius:var(--radius-lg);padding:0 clamp(10px,1.5vw,16px) 6px;
   max-width:100%;min-width:0;position:relative;
   font-family:var(--serif);font-size:clamp(13px,1.6vw,15.5px);
@@ -1021,8 +1021,8 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 
 /* 回答区 */
 .sub-answer-wrap{margin-top:0}
-.sub-answer-body{color:var(--ink);line-height:1.4}
-.sub-answer-body p{margin:0 0 2em}
+.sub-answer-body{color:var(--ink);line-height:1.15}
+.sub-answer-body p{margin:0 0 2px}
 .sub-answer-body h3{font-size:13px;margin:8px 0 4px;color:var(--ink)}
 .sub-answer-body ul,.sub-answer-body ol{margin:4px 0 4px 20px}
 .sub-answer-body li{margin:2px 0}

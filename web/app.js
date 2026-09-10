@@ -535,10 +535,15 @@ async function selectProject(pid) {
 
 // ---------- 文件树 ----------
 const KIND_META = {
-  character: { label: "角色", icon: "👤" },
-  location: { label: "地点", icon: "📍" },
-  lore: { label: "世界观", icon: "🌐" },
-  timeline: { label: "时间线", icon: "⏱" },
+  character:  { label: "人物设定", icon: "👤" },
+  world:      { label: "世界观", icon: "🌍" },
+  outline:    { label: "大纲", icon: "📋" },
+  style:      { label: "文风参考", icon: "🎨" },
+  foreshadow: { label: "伏笔", icon: "🔗" },
+  plot:       { label: "剧情节点", icon: "⚡" },
+  location:   { label: "地点", icon: "📍" },
+  timeline:   { label: "时间线", icon: "⏱" },
+  milestone:  { label: "里程碑", icon: "🏁" },
 };
 const FILE_ICON = { chapter: "📄", source: "📚" };
 
@@ -1351,7 +1356,7 @@ function handleEvent(evt, assistant) {
     case "sub_answer": {
       // 群聊式: 专家 agent 的最终回答作为气泡正文 (思考面板保持折叠)
       const ag = evt.agent || "";
-      const text = evt.text || "";
+      const text = evt.text || evt.content || "";
       if (!text) break;
       const entry = assistant.subBubbles && assistant.subBubbles[ag];
       if (!entry) break;
@@ -1495,6 +1500,18 @@ function handleEvent(evt, assistant) {
       const q = getToolQueue(assistant, ag);
       const capsule = q.shift();
       if (capsule) doneToolCapsule(capsule);
+      // 设定类工具执行后实时刷新侧边栏
+      const _tool = evt.tool || "";
+      if ((_tool === "add_element" || _tool === "manage_character" || _tool === "manage_world" || _tool === "manage_milestone") && currentProject) {
+        api(`/api/projects/${currentProject.id}`).then((p) => {
+          if (p && currentProject) {
+            currentProject.chapters = p.chapters || [];
+            currentProject.elements = p.elements || [];
+            currentProject.meta = p.meta || currentProject.meta;
+            renderTree();
+          }
+        }).catch(() => {});
+      }
       scrollChat();
       break;
     }

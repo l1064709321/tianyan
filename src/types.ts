@@ -251,6 +251,7 @@ export type SSEEvent =
   | { type: "delegate_done"; from: AgentName; to: AgentName; task: string; result: string; durationMs: number }
   | { type: "sub_agent_start"; agent: AgentName; task: string; depth: number }
   | { type: "sub_agent_done"; agent: AgentName; result: string; durationMs: number }
+  | { type: "sub_answer"; agent: AgentName; content: string }
   | { type: "sub_agent_error"; agent: AgentName; error: string }
   | { type: "observation"; agent: AgentName; tool: string; result: string }
   | { type: "token"; agent: AgentName; content: string }

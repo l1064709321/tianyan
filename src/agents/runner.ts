@@ -1279,7 +1279,7 @@ const TOOL_SCHEMAS: Record<string, ToolDefinition> = {
   },
   add_element: {
     type: "function",
-    function: { name: "add_element", description: "添加设定元素", parameters: { type: "object", properties: { kind: { type: "string" }, name: { type: "string" }, detail: { type: "string" } }, required: ["kind", "name"] } },
+    function: { name: "add_element", description: "添加设定到侧边栏设定集。kind必须是以下之一: character(人物设定), world(世界观/修炼体系/势力规则), outline(大纲/卷纲/细纲), style(文风参考/对标作品), foreshadow(伏笔/线索), plot(剧情节点/爽点/钩子), location(地点), timeline(时间线), milestone(里程碑)", parameters: { type: "object", properties: { kind: { type: "string", description: "分类: character/world/outline/style/foreshadow/plot/location/timeline/milestone" }, name: { type: "string", description: "设定名称" }, detail: { type: "string", description: "设定详细内容" } }, required: ["kind", "name"] } },
   },
   manage_world: {
     type: "function",
@@ -1416,7 +1416,31 @@ export async function runAgentLoop(state: RunState): Promise<string> {
     const THINK_BUFFER_MAX = 2000;
 
     try {
-      const agentTools = getToolDefinitions(agentName);
+      let agentTools = getToolDefinitions(agentName);
+      const msgRoles = messages.map(m => m.role);
+      const toolMsgCount = msgRoles.filter(r => r === 'tool').length;
+      const assistantMsgCount = msgRoles.filter(r => r === 'assistant').length;
+      const totalMsgLen = messages.reduce((sum, m) => sum + m.content.length, 0);
+      // 子agent超过4步时禁用工具，强制生成最终回答
+      // 或者消息总长度超过12000时也禁用（agnes在上下文过大时返回空响应）
+      if (depth > 0 && (step >= 4 || totalMsgLen > 12000)) {
+        const reason = step >= 4 ? `step>=4` : `total_len=${totalMsgLen}>12000`;
+        agentTools = [];
+      }
+      // 如果消息过大(>15000 chars), 截断旧的tool消息防止agnes返回空响应
+      if (totalMsgLen > 15000) {
+        let reduced = 0;
+        for (let i = 0; i < messages.length - 2; i++) {
+          if (messages[i].role === 'tool' && messages[i].content.length > 1000) {
+            const orig = messages[i].content;
+            messages[i] = { ...messages[i], content: orig.slice(0, 800) + '\n...(已截断)' };
+            reduced += orig.length - messages[i].content.length;
+          }
+        }
+        if (reduced > 0) {
+          const newLen = messages.reduce((s, m) => s + m.content.length, 0);
+        }
+      }
       const streamGen = llmStream(messages, undefined, { tools: agentTools });
       for await (const chunk of streamGen) {
         // TOOLCALL_PREFIX: 原生 tool_calls 由 llm.ts 累积后在末尾输出
@@ -1516,6 +1540,12 @@ export async function runAgentLoop(state: RunState): Promise<string> {
 
     const content = fullContent;
     if (content.trim()) bestContent = content;  // 记录最佳内容
+    // agnes有时在content中只有空白(\n\n), 但reasoning_content有实质内容
+    // 如果content只有空白但thinkingText有内容, 也把thinkingText作为bestContent
+    if (!bestContent && thinkingText.trim().length > 100) {
+      bestContent = thinkingText.trim();
+    }
+    // DEBUG: 追踪子agent每轮LLM输出
 
     // 持久化思考文本 (tool_name='think'), 前端历史渲染时可恢复折叠面板
     if (thinkingText.trim()) {
@@ -1590,6 +1620,10 @@ export async function runAgentLoop(state: RunState): Promise<string> {
           state.delegationLog.push({ to: target, task, result: subResult, durationMs: subDur });
           emit({ type: "delegate_done", from: agentName, to: target as AgentName, task, result: subResult, durationMs: subDur });
           emit({ type: "sub_agent_done", agent: target as AgentName, result: subResult, durationMs: subDur });
+          // 发送子agent最终回答到前端子气泡
+          if (subResult && subResult.trim()) {
+            emit({ type: "sub_answer", agent: target as AgentName, content: subResult });
+          }
           // 工具结果包含子 agent 返回的 JSON
           // 工具结果包含子 agent 返回的 JSON + 推进指引
           const subResultTruncated = subResult.length > 5000 ? subResult.slice(0, 5000) + "\n...(已截断)" : subResult;
@@ -1630,6 +1664,17 @@ export async function runAgentLoop(state: RunState): Promise<string> {
         } catch { /* ignore */ }
       }
       // 循环继续，LLM 看到 tool 结果后生成下一轮
+      // 特殊情况: agnes返回了thinking但没有content也没有tool_calls
+      // 这说明agnes已经完成了工具调用并给出了最终思考，但content为空
+      if (nativeToolCalls.length === 0 && content.trim().length === 0 && thinkingText.trim().length > 50) {
+        // agnes把答案放在了reasoning_content里（content为空），用thinking作为最终结果
+        const thinkingAsAnswer = thinkingText.trim();
+        store.addMessage(pid, "assistant", thinkingAsAnswer);
+        store.addRunEvent(runId, "end", { agent: agentName, output: thinkingAsAnswer.slice(0, 500) });
+        store.finishRun(runId, "done");
+        clearInterval(heartbeatTimer);
+        return thinkingAsAnswer;
+      }
       continue;
     }
 
@@ -1641,6 +1686,23 @@ export async function runAgentLoop(state: RunState): Promise<string> {
       const finalContent = content || bestContent || (thinkingText ? thinkingText.slice(0, 2000) : "");
       if (!finalContent) {
         // 真正的空回复: 发通知给前端, 继续循环尝试
+        // 2次空回复即退出——agnes在消息过多时返回空响应是已知问题
+        if (step >= 3 && bestContent.length > 0) {
+          store.addMessage(pid, "assistant", bestContent);
+          store.addRunEvent(runId, "end", { agent: agentName, output: bestContent.slice(0, 500) });
+          store.finishRun(runId, "done");
+          clearInterval(heartbeatTimer);
+          return bestContent;
+        }
+        // 连续3次空回复即强制退出
+        if (step >= 5) {
+          const fallback = bestContent || "子agent在工具调用后未能生成最终回答，请简化任务重试";
+          store.addMessage(pid, "assistant", fallback);
+          store.addRunEvent(runId, "end", { agent: agentName, output: fallback.slice(0, 500) });
+          store.finishRun(runId, "done");
+          clearInterval(heartbeatTimer);
+          return fallback;
+        }
         emit({ type: "observation", agent: agentName, tool: "empty_response", result: "LLM返回空内容, 重试中..." });
         continue;
       }

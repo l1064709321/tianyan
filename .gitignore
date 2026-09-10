@@ -45,3 +45,6 @@ tianyan_preview.png
 # Node.js
 node_modules/
 dist/
+*.bak
+.tianyan/
+package-lock.json
